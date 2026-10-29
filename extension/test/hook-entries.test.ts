@@ -13,11 +13,11 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import {
   isLegacyAgentFlowHookUrl, isAgentFlowHook, hasAgentFlowHook,
-  mergeAgentFlowHooks, migrateLegacyHttpHooks,
-  readSettingsFile, writeJsonAtomic,
+  mergeAgentFlowHooks, migrateLegacyHttpHooks, removeAgentFlowHooks,
+  readSettingsFile, writeJsonAtomic, HOOK_EVENTS, missingHookEvents,
 } from '../src/hook-entries'
 
-const HOOK_CMD = '"/usr/bin/node" "/home/u/.claude/agent-flow/hook.js"'
+const HOOK_CMD = '"/usr/bin/node" "/home/u/.claude/switchboard/hook.js"'
 const foreignHttp = () => ({ hooks: [{ type: 'http', url: 'http://127.0.0.1:19847/hook/9207692e/session-start' }] })
 
 function tmpDir() {
@@ -38,12 +38,14 @@ describe('isLegacyAgentFlowHookUrl', () => {
 describe('isAgentFlowHook', () => {
   it('matches our command hook on POSIX and Windows paths', () => {
     assert.equal(isAgentFlowHook({ hooks: [{ command: HOOK_CMD }] }), true)
-    assert.equal(isAgentFlowHook({ hooks: [{ command: '"C:\\node.exe" "C:\\Users\\u\\.claude\\agent-flow\\hook.js"' }] }), true)
+    assert.equal(isAgentFlowHook({ hooks: [{ command: '"C:\\node.exe" "C:\\Users\\u\\.claude\\switchboard\\hook.js"' }] }), true)
   })
 
   it("does not match other tools' hooks", () => {
     assert.equal(isAgentFlowHook(foreignHttp()), false)
     assert.equal(isAgentFlowHook({ hooks: [{ command: 'other-tool notify' }] }), false)
+    // Agent Flow's own forwarder stays Agent Flow's, for its own uninstall to remove.
+    assert.equal(isAgentFlowHook({ hooks: [{ command: '"/usr/bin/node" "/home/u/.claude/agent-flow/hook.js"' }] }), false)
     assert.equal(isAgentFlowHook({}), false)
   })
 })
@@ -54,7 +56,7 @@ describe('mergeAgentFlowHooks', () => {
       permissions: { allow: ['Bash(ls)'] },
       hooks: {
         SessionStart: [foreignHttp(), { hooks: [{ type: 'http', url: 'http://127.0.0.1:52341' }] }],
-        Stop: [{ hooks: [{ type: 'command', command: '"/old/node" "/x/.claude/agent-flow/hook.js"' }] }],
+        Stop: [{ hooks: [{ type: 'command', command: '"/old/node" "/x/.claude/switchboard/hook.js"' }] }],
         UserPromptSubmit: [foreignHttp()],
       },
     }
@@ -70,11 +72,47 @@ describe('mergeAgentFlowHooks', () => {
   })
 })
 
+describe('removeAgentFlowHooks', () => {
+  it('drops only our entries and the events they leave empty', () => {
+    const ours = { hooks: [{ type: 'command', command: HOOK_CMD }] }
+    const agentFlow = { hooks: [{ type: 'command', command: 'node /home/u/.claude/agent-flow/hook.js' }] }
+    const settings: Record<string, unknown> = { model: 'opus', hooks: { Stop: [ours, foreignHttp()], SessionStart: [ours], PreToolUse: [agentFlow] } }
+    removeAgentFlowHooks(settings)
+    assert.deepEqual(settings, { model: 'opus', hooks: { Stop: [foreignHttp()], PreToolUse: [agentFlow] } })
+  })
+
+  it('removes the hooks key once nothing is left in it', () => {
+    const settings: Record<string, unknown> = { hooks: { Stop: [{ hooks: [{ type: 'command', command: HOOK_CMD }] }] } }
+    assert.deepEqual(removeAgentFlowHooks(settings), {})
+  })
+})
+
 describe('hasAgentFlowHook', () => {
   it('is false when only another tool has loopback hooks', () => {
     assert.equal(hasAgentFlowHook({ hooks: { SessionStart: [foreignHttp()] } }), false)
     assert.equal(hasAgentFlowHook({ hooks: { SessionStart: [{ hooks: [{ command: HOOK_CMD }] }] } }), true)
     assert.equal(hasAgentFlowHook({}), false)
+  })
+})
+
+describe('missingHookEvents', () => {
+  it('names events that lack our hook, so an older install gets new ones without touching the rest', () => {
+    const ours = () => ({ hooks: [{ type: 'command', command: HOOK_CMD }] })
+    const hooks: Record<string, unknown> = {}
+    for (const e of HOOK_EVENTS) if (e !== 'UserPromptSubmit') hooks[e] = [ours()]
+    hooks.UserPromptSubmit = [foreignHttp()]
+    hooks.PreToolUse = [foreignHttp(), ours()]
+    const settings: Record<string, unknown> = { hooks, permissions: { allow: ['Bash'] } }
+    assert.deepEqual(missingHookEvents(settings, HOOK_EVENTS), ['UserPromptSubmit'])
+    const before = JSON.parse(JSON.stringify(settings))
+    mergeAgentFlowHooks(settings, ours(), missingHookEvents(settings, HOOK_EVENTS))
+    assert.deepEqual(missingHookEvents(settings, HOOK_EVENTS), [])
+    assert.deepEqual((settings.hooks as Record<string, unknown>).UserPromptSubmit, [foreignHttp(), ours()])
+    for (const e of HOOK_EVENTS) if (e !== 'UserPromptSubmit') assert.deepEqual((settings.hooks as Record<string, unknown>)[e], before.hooks[e])
+    assert.deepEqual(settings.permissions, before.permissions)
+  })
+  it('names every event when there are no hooks', () => {
+    assert.deepEqual(missingHookEvents({}, ['Stop']), ['Stop'])
   })
 })
 
@@ -123,5 +161,11 @@ describe('writeJsonAtomic', () => {
     writeJsonAtomic(file, { a: 1 })
     assert.equal(fs.readFileSync(file, 'utf-8'), '{\n  "a": 1\n}\n')
     assert.deepEqual(fs.readdirSync(path.dirname(file)), ['settings.json'])
+  })
+})
+
+describe('HOOK_EVENTS', () => {
+  it('registers UserPromptSubmit so a new prompt clears Done', () => {
+    assert.ok(HOOK_EVENTS.includes('UserPromptSubmit'))
   })
 })

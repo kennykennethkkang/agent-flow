@@ -1,0 +1,360 @@
+/**
+ * Hub states for when no extension is there: empty, and a sample for the browser demo.
+ * The sample mirrors a real week on Kenneth's Mac so the demo reads true.
+ */
+import type { HubCommand } from './vscode-bridge'
+import type { ChangedFile, ChatProfile, HubState, ToolCall } from './hub-types'
+
+export const emptyHub = (): HubState => ({
+  live: [], history: [], sessions: [], plan: null,
+  servers: [], git: null, aws: [], signIns: { chrome: [], projects: {} }, jev: [], waits: [], installed: [], connections: [], rc: { atStartup: false },
+  keep: { autoCompact: true, autoContinue: false, onFull: 'fresh', freshBranch: false },
+  projects: [],
+  controls: {
+    claude: { tui: 'default', statusLine: false, push: false, needInput: false },
+    switchboard: { hooks: false, statusBar: true, idleMinutes: 15, brief: true, askBrain: true, syncRules: true },
+    statusLineReady: false,
+  },
+  chats: [], rcServers: [], ais: [], starred: [], progress: [], archive: [],
+  changes: null, search: null, webUrl: null, phoneUrl: null,
+  tools: { flagged: DEMO_FLAGGED, pick: null, chats: {} },
+})
+
+const DEMO_TAILNET = 'http://mac.tail1234.ts.net'
+// Same list as extension/src/hub/tools.ts FLAGGED.
+const DEMO_FLAGGED = ['auth0@claude-plugins-official', 'stitch-build@google-labs-code-stitch-skills', 'stitch-design@google-labs-code-stitch-skills', 'stitch-utilities@google-labs-code-stitch-skills']
+/** The extension asks a model; the demo turns on what the goal names, plus superpowers, and never a flagged one. */
+const demoPick = (h: HubState, goal: string): ChatProfile => {
+  const g = goal.toLowerCase(), named = (n: string) => g.includes(n.split('@')[0].split('-')[0])
+  return {
+    plugins: Object.fromEntries(h.installed.filter(i => i.kind === 'plugin').map(i => [i.name, !DEMO_FLAGGED.includes(i.name) && (i.name.startsWith('superpowers@') || named(i.name))])),
+    skills: Object.fromEntries(h.installed.filter(i => i.kind === 'skill' && i.enabled).map(i => [i.name, named(i.name)])),
+  }
+}
+
+const DAY = 86_400_000
+const REREAD = [128.0, 0, 0, 428.2, 699.1, 1281.7, 1631.5, 685.5, 1751.8, 929.7, 1436.5, 229.7, 1306.3, 236.0]
+const CALLS = [185, 0, 0, 869, 1212, 2486, 2885, 1240, 3011, 1790, 2702, 401, 5698, 704]
+
+export function demoHub(now = Date.now()): HubState {
+  const day = (i: number) => {
+    const d = new Date(now - (13 - i) * DAY)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+  return {
+    ...emptyHub(),
+    controls: {
+      claude: { model: 'opus', tui: 'fullscreen', statusLine: false, push: true, needInput: true },
+      switchboard: { hooks: true, statusBar: true, idleMinutes: 15, brief: true, askBrain: true, syncRules: true },
+      statusLineReady: true,
+    },
+    projects: [
+      { name: 'Armasu', path: '/Users/k/Documents/GitHub/Armasu', kind: 'repo', isOpen: true },
+      { name: 'Gemini-Test', path: '/Users/k/Documents/GitHub/Gemini-Test', kind: 'repo', isOpen: false },
+      { name: 'claude-mods', path: '/Users/k/Documents/GitHub/claude-mods', kind: 'repo', isOpen: false },
+      { name: 'CSEN122', path: '/Users/k/Documents/CSEN122', kind: 'project', isOpen: false },
+    ],
+    chats: [
+      { pid: 1, sessionId: 'd-work', takes: true, name: 'Fix login redirect v4', chain: 'Fix login redirect', cwd: '/Users/k/GitHub/Armasu', link: '', live: true, why: [] },
+      { pid: 2, sessionId: 'd-done', takes: true, name: 'Hub AIs and Starred', cwd: '/Users/k/GitHub/agent-flow', link: '', live: true, why: [] },
+      { pid: 3, sessionId: 'd-ask', takes: true, name: 'Outfit picker copy', cwd: '/Users/k/GitHub/Armasu', link: '', live: true, why: [] },
+      { pid: 4, sessionId: 'd-idle', name: 'Kit cleanup', cwd: '/Users/k/GitHub/claude-mods', link: '', live: true, why: [] },
+    ],
+    progress: [
+      { sessionId: 'd-work', cwd: '/Users/k/GitHub/Armasu', state: 'working', startedAt: now - 12 * 60e3, at: now,
+        roles: [...demoRuns(11_000, now), JEV_ROLE],
+        tasks: [
+          { id: '1', subject: 'Find where the redirect loops', status: 'completed', role: 'researcher' },
+          { id: '2', subject: 'Write a failing test', status: 'completed', role: 'engineer' },
+          { id: '3', subject: 'Fix the cookie check', status: 'in_progress', role: 'engineer' },
+          { id: '4', subject: 'Run tests and review', status: 'pending', role: 'qa' },
+        ],
+        tools: [
+          { tool: 'Grep', target: 'redirect', role: 'researcher', at: now - 50e3 },
+          { tool: 'Read', target: 'auth/middleware.ts', role: 'researcher', at: now - 40e3 },
+          { tool: 'Write', target: 'auth/redirect.test.ts', role: 'engineer', at: now - 20e3 },
+          { tool: 'Edit', target: 'auth/middleware.ts', role: 'engineer', at: now - 5e3 },
+          { ...JEV_CALL, at: now - 3e3 },
+        ] },
+      { sessionId: 'd-done', cwd: '/Users/k/GitHub/agent-flow', state: 'done', startedAt: now - 42 * 60e3, at: now - 60e3,
+        roles: (['researcher', 'engineer', 'qa'] as const).map((role, i) => ({ id: `${role[0]}1`, role, state: 'done' as const, startedAt: now - (40 - i * 10) * 60e3 })),
+        tasks: [{ id: '1', subject: 'Types', status: 'completed' }, { id: '2', subject: 'AI registry', status: 'completed' }],
+        commit: 'feat(hub): multi-AI chats and Starred chats',
+        tools: [
+          { tool: 'Edit', target: 'hub/types.ts', role: 'engineer', at: now - 5 * 60e3 },
+          { tool: 'Bash', target: 'pnpm test', role: 'qa', at: now - 2 * 60e3 },
+        ] },
+      { sessionId: 'd-ask', cwd: '/Users/k/GitHub/Armasu', state: 'needs-you', startedAt: now - 5 * 60e3, at: now,
+        roles: [{ id: 'g1', role: 'designer', state: 'active', startedAt: now - 4 * 60e3 }],
+        tasks: [{ id: '1', subject: 'Draft the picker labels', status: 'completed', role: 'designer' }, { id: '2', subject: 'Pick the closet name', status: 'in_progress', role: 'designer' }, { id: '3', subject: 'Ship copy for review', status: 'pending', role: 'growth' }],
+        question: "Keep 'Closet' or rename it to 'Wardrobe'?" },
+      { sessionId: 'd-idle', cwd: '/Users/k/GitHub/claude-mods', state: 'idle', startedAt: now - 90 * 60e3, at: now - 30 * 60e3,
+        roles: [], tasks: [{ id: '1', subject: 'Drop old presets', status: 'pending' }] },
+    ],
+    ais: [
+      { id: 'claude', name: 'Claude Code', installed: true, chats: 3 },
+      { id: 'codex', name: 'Codex', installed: false, detail: 'CLI not installed: npm i -g @openai/codex', chats: 0 },
+    ],
+    starred: [
+      { sessionId: 'd1b7e00d-d8c7-429e-a4b3-4420e8b32e67', ai: 'claude', name: 'agentFlow', cwd: '/Users/k/Documents/GitHub/agent-flow', starredAt: now - DAY, live: false,
+        digest: { lastPrompt: 'add codex to the hub', resume: 'claude --resume d1b7e00d-d8c7-429e-a4b3-4420e8b32e67', updatedAt: now - 3600_000 } },
+    ],
+    // The working chat's three earlier chats, each closed when it filled up, and one older chain.
+    archive: [...[1, 2, 3].map(v => ({
+      sessionId: `d-fix-v${v}`, ai: 'claude' as const, name: v === 1 ? 'Fix login redirect' : `Fix login redirect v${v}`, origin: 'Fix login redirect', version: v,
+      cwd: '/Users/k/GitHub/Armasu', project: 'Armasu', note: `/Users/k/.claude/handoffs/Armasu/fix-login-redirect-v${v}.md`,
+      startedAt: now - (4 - v) * 5 * 3600_000 - 3 * 3600_000, archivedAt: now - (4 - v) * 5 * 3600_000,
+    })), {
+      sessionId: 'd-banner-v1', ai: 'claude' as const, name: 'Cookie banner copy', origin: 'Cookie banner copy', version: 1,
+      cwd: '/Users/k/GitHub/Armasu', project: 'Armasu', note: '/Users/k/.claude/handoffs/Armasu/cookie-banner-copy-v1.md',
+      startedAt: now - 5 * DAY - 2 * 3600_000, archivedAt: now - 5 * DAY,
+    }],
+    rcServers: [{ folder: '/Users/k/Documents/GitHub', name: 'Mac', on: true }],
+    live: [{ sessionId: 'd-work', cwd: '/Users/k/GitHub/Armasu', label: 'Fix login redirect v4', model: 'claude-opus-5-5', tokens: 64_000, compactAt: 167_000, costUsd: 1.84, at: now, limits: [] },
+      { sessionId: 'demo-1', cwd: '/Users/k/Documents/GitHub/Armasu', label: 'Setupfeatures', model: 'claude-opus-5-5', tokens: 82_000, compactAt: 167_000, at: now,
+      limits: [{ kind: 'five_hour', percentUsed: 41, resetsAt: new Date(now + 130 * 60_000).toISOString() }, { kind: 'seven_day', percentUsed: 78, resetsAt: new Date(now + 2.1 * DAY).toISOString() }] }],
+    history: REREAD.map((m, i) => ({ day: day(i), reread: m * 1e6, written: m * 2e4, io: m * 4e3, calls: CALLS[i], sessions: CALLS[i] ? 1 + (i % 3) : 0 })),
+    sessions: [
+      { sessionId: 'demo-1', label: 'Setupfeatures', project: 'Armasu', reread: 363.7e6, calls: 2100, startedAt: now - 9 * 3600_000, lastAt: now - 4 * 60_000 },
+      { sessionId: 'demo-2', label: 'Closet regen button', project: 'Armasu', reread: 1.03e9, calls: 5100, startedAt: now - 20 * 3600_000, lastAt: now - 4 * 60_000 },
+      { sessionId: 'demo-3', label: 'CSEN122 notes', project: 'CSEN122', reread: 20.3e6, calls: 140, startedAt: now - 3 * DAY, lastAt: now - 2 * DAY },
+    ],
+    plan: { name: '2026-10-23-switchboard.md', tasks: [
+      { title: '1 Fork identity and a clean build', done: 4, total: 4 }, { title: '2 Contract, hub service and the feed routes', done: 5, total: 5 },
+      { title: '3 History and sessions from the transcripts', done: 3, total: 3 }, { title: '4 The usage mod becomes the feed', done: 2, total: 4 },
+      { title: '5 Hub tab', done: 0, total: 4 }, { title: '6 Timeline', done: 0, total: 5 },
+    ] },
+    servers: [
+      { pid: 29313, command: 'node', port: 3000, folder: 'GitHub/Armasu' },
+      { pid: 2635, command: 'Python', port: 4211, folder: 'scratchpad/profile-site' },
+      { pid: 18558, command: 'node', port: 4262, folder: 'GitHub/Armasu' },
+    ],
+    git: { branch: 'Social-media-dev', ahead: 0, behind: 0, changed: 55, staged: 0, untracked: 7 },
+    dev: [
+      { folder: '/Users/k/Documents/GitHub/Armasu', project: 'Armasu', command: 'pnpm run dev', port: 3000, link: `${DEMO_TAILNET}:13000` },
+      { folder: '/Users/k/Documents/GitHub/QR-Test', project: 'QR-Test', command: 'npm run dev' },
+    ],
+    tailscale: true,
+    awake: false,
+    tools: { flagged: DEMO_FLAGGED, pick: null, chats: { 'd-work': { plugins: { 'superpowers@superpowers-dev': true, 'aws-core@claude-plugins-official': false, 'stitch-design@google-labs-code-stitch-skills': false }, skills: { 'claude-x-jev': false, phone: false } } } },
+    installed: [
+      { kind: 'mod', name: 'usage-meter@kenneth-mods', enabled: true }, { kind: 'mod', name: 'repo-rules@kenneth-mods', enabled: true }, { kind: 'mod', name: 'paid-guard@kenneth-mods', enabled: true },
+      { kind: 'plugin', name: 'superpowers@superpowers-dev', enabled: true, skills: ['brainstorming', 'test-driven-development', 'writing-plans'] }, { kind: 'plugin', name: 'aws-core@claude-plugins-official', enabled: true }, { kind: 'plugin', name: 'stitch-design@google-labs-code-stitch-skills', enabled: false },
+      { kind: 'skill', name: 'claude-x-jev', enabled: true }, { kind: 'skill', name: 'phone', enabled: true }, { kind: 'skill', name: 'drei', enabled: false },
+      { kind: 'role', name: 'researcher', enabled: true, model: 'haiku' }, { kind: 'role', name: 'engineer', enabled: true, model: 'opus' }, { kind: 'role', name: 'qa', enabled: true, model: 'opus' },
+      { kind: 'role', name: 'designer', enabled: true, model: 'opus' }, { kind: 'role', name: 'ops', enabled: true, model: 'haiku' }, { kind: 'role', name: 'growth', enabled: true, model: 'sonnet' },
+      { kind: 'preset', name: 'armasu-copy-check', enabled: true }, { kind: 'preset', name: 'armasu-route-release', enabled: true },
+    ],
+    connections: [
+      { kind: 'mcp', name: 'openrouter', status: 'on', detail: 'Armasu' }, { kind: 'mcp', name: 'aws-mcp', status: 'error', detail: 'sign in' },
+      { kind: 'project', name: 'Armasu', status: 'on', detail: 'Claude Code history' }, { kind: 'project', name: 'CSEN122', status: 'on', detail: 'Claude Code history' },
+      { kind: 'window', name: 'Armasu', status: 'on', detail: 'Switchboard window' }, { kind: 'repo', name: 'Gemini-Test', status: 'on', detail: 'GitHub' },
+    ],
+    aws: [
+      { name: 'default', isDefault: true, account: '111122223333', label: 'k@example.com', region: 'us-west-1', status: 'signed-in', chrome: 'Default', checkedAt: now },
+      { name: 'live', isDefault: false, account: '111122223333', label: 'k@example.com', region: 'us-west-1', status: 'signed-in', chrome: 'Default', checkedAt: now },
+      { name: 'yo', isDefault: false, account: '444455556666', label: 'Work sandbox', region: 'us-east-1', status: 'expired', chrome: 'Profile 2', checkedAt: now },
+      { name: 'scratch', isDefault: false, region: 'eu-central-1', status: 'never', checkedAt: now },
+    ],
+    signIns: {
+      chrome: [{ dir: 'Default', name: 'Personal', email: 'k@example.com' }, { dir: 'Profile 2', name: 'Work', email: 'k@work.example' }],
+      projects: { '/Users/k/GitHub/Armasu': 'live' },
+      window: '/Users/k/GitHub/Armasu',
+      apps: [{
+        id: 'auth0', name: 'Auth0', url: 'https://manage.auth0.com/', active: 'a-work',
+        logins: [
+          { id: 'a-work', label: 'Work tenant', url: 'https://manage.auth0.com/dashboard/us/acme-prod/', chrome: 'Profile 2' },
+          { id: 'a-dev', label: 'Dev tenant', url: 'https://manage.auth0.com/dashboard/us/acme-dev/', chrome: 'Profile 2' },
+          { id: 'a-me', label: 'Personal', url: 'https://manage.auth0.com/', chrome: 'Default' },
+        ],
+      }],
+    },
+    jev: [
+      { sessionId: 'd-work', preset: 'triage-comments', items: 24, costUsd: 0.0061, seconds: 7.2, at: now - 8 * 60e3 },
+      { sessionId: 'd-done', preset: 'lead-score', items: 40, costUsd: 0.0123, seconds: 11.4, at: now - 30 * 60e3 },
+    ],
+  }
+}
+
+const ROLES = ['researcher', 'engineer', 'qa']
+// The working demo chat ran Jev, so the orbit shows its bubble and, every sixth tick, a Jev pill.
+const JEV_ROLE = { id: 'jev', role: 'jev', state: 'done', startedAt: 0 } as const
+// The working demo chat's subagents over one 20 s loop: [id, role, start, end] in ms, so bubbles pop in and out.
+const RUNS: [string, string, number, number][] = [
+  ['r1', 'researcher', 0, 6_667], ['r2', 'researcher', 1_200, 12_000],
+  ['e1', 'engineer', 6_667, 15_000], ['e2', 'engineer', 8_000, 20_000],
+  ['q1', 'qa', 10_000, 20_000], ['q2', 'qa', 15_500, 20_000],
+]
+/** The runs started by ms into the loop; at 11 s: two engineers, a researcher and qa running, one researcher done. */
+const demoRuns = (ms: number, now: number) => RUNS.filter(r => r[2] <= ms)
+  .map(([id, role, start, end]) => ({ id, role, state: end <= ms ? 'done' as const : 'active' as const, startedAt: now - (ms - start) }))
+const JEV_CALL = { tool: 'triage-comments', target: '24 items · $0.0061', role: 'jev' }
+const CALLS_BY_ROLE: Record<string, [string, string][]> = {
+  researcher: [['Grep', 'redirect'], ['Read', 'auth/middleware.ts'], ['Glob', '**/*.test.ts'], ['Read', 'lib/session.ts']],
+  engineer: [['Edit', 'auth/middleware.ts'], ['Write', 'auth/redirect.test.ts'], ['Bash', 'pnpm test auth'], ['Edit', 'lib/session.ts']],
+  qa: [['Bash', 'pnpm test'], ['Bash', 'pnpm tsc --noEmit'], ['Read', 'auth/middleware.ts'], ['Grep', 'TODO']],
+}
+
+/** One more tool call on the working demo chat; the calling role turns researcher, engineer, qa every 20 s, and subagents start and stop on RUNS. */
+export function demoTick(h: HubState, now: number): HubState {
+  const i = Math.floor((now % 20_000) / (20_000 / 3)), role = ROLES[i]
+  const pick = CALLS_BY_ROLE[role][Math.floor(now / 900) % 4]
+  const call: ToolCall = Math.floor(now / 900) % 6 === 0 ? { ...JEV_CALL, at: now } : { tool: pick[0], target: pick[1], role, at: now }
+  return { ...h, progress: h.progress.map(p => p.sessionId !== 'd-work' ? p : {
+    ...p, at: now,
+    roles: [...demoRuns(now % 20_000, now), JEV_ROLE],
+    tasks: p.tasks.map(t => {
+      const j = ROLES.indexOf(t.role ?? '')
+      return { ...t, status: j < i ? 'completed' : j === i ? 'in_progress' : 'pending' }
+    }),
+    tools: [...(p.tools ?? []), call].slice(-8),
+  }) }
+}
+
+// What the demo's handoff notes say, for History search.
+const NOTES: Record<string, string> = {
+  'd-fix-v1': 'Found the redirect loop in auth/middleware.ts: /login sends a signed-in user back to /login.',
+  'd-fix-v2': 'Wrote the failing test in auth/redirect.test.ts. Next: the session check in lib/session.ts.',
+  'd-fix-v3': 'The cookie check skipped SameSite on Safari, so the session looked empty and the redirect looped. Fix the check next.',
+  'd-banner-v1': 'Rewrote the banner text to match the new privacy page. Waiting on legal for the last line.',
+}
+
+const diffOf = (rows: string[]) => rows.join('\n')
+/** The demo chats' uncommitted files. */
+const CHANGES: Record<string, ChangedFile[]> = {
+  'd-work': [
+    { path: 'auth/middleware.ts', added: 18, removed: 6, status: 'modified', diff: diffOf(['@@ -12,9 +12,21 @@ export function middleware(req: Request) {', '   const session = readSession(req)', '-  if (!session) return redirect(\'/login\')', '+  if (!session && !isLogin(req)) return redirect(\'/login\')', '+  if (session && isLogin(req)) return redirect(\'/home\')', '   return next()']) },
+    { path: 'auth/redirect.test.ts', added: 24, removed: 0, status: 'untracked', diff: diffOf(['+import { next } from \'./middleware\'', '+', "+it('stops the redirect loop', async () => {", "+  expect(await next('/login')).toBe('/home')", '+})']) },
+    { path: 'lib/session.ts', added: 0, removed: 3, status: 'modified', diff: diffOf(['@@ -40,7 +40,4 @@ export function readSession(req: Request) {', '-  // TODO: cover the loop', '-  if (ua.includes(\'Safari\')) return null', '-', '   return parse(req.headers.get(\'cookie\'))']) },
+    { path: 'public/login-hero.png', added: 0, removed: 0, status: 'modified', note: 'Binary file: no text diff.' },
+  ],
+  'd-done': [
+    { path: 'extension/src/hub/ais.ts', added: 149, removed: 0, status: 'added', note: 'This diff is too big to show here (152 lines). Open it in VS Code.' },
+    { path: 'extension/src/hub/types.ts', added: 6, removed: 1, status: 'modified', diff: diffOf(['@@ -60,7 +60,12 @@', "-export type ChatRow = { pid: number; sessionId: string }", "+export type AiId = 'claude' | 'codex'", '+export type ChatRow = { pid: number; sessionId: string; ai?: AiId }']) },
+  ],
+}
+
+/** The browser demo has no extension behind it, so the Hub's own settings apply here. */
+export function demoApply(h: HubState, c: HubCommand): HubState {
+  switch (c.type) {
+    // A full chat always continues fresh, so only the branch switch applies.
+    case 'hub-keep': return c.freshBranch === undefined ? h : { ...h, keep: { ...h.keep, freshBranch: c.freshBranch } }
+    case 'hub-setting': {
+      const keep = { ...h.keep }, claude = { ...h.controls.claude }
+      if (c.key === 'autoCompactEnabled') keep.autoCompact = c.value === true
+      if (c.key === 'autoContinueAtUsageLimit') keep.autoContinue = c.value === true
+      if (c.key === 'autoCompactWindow' && typeof c.value === 'number') keep.window = c.value
+      if (c.key === 'model') claude.model = (c.value ?? undefined) as typeof claude.model
+      if (c.key === 'effortLevel') claude.effortLevel = (c.value ?? undefined) as typeof claude.effortLevel
+      if (c.key === 'tui') claude.tui = c.value === 'fullscreen' ? 'fullscreen' : 'default'
+      if (c.key === 'statusLine') claude.statusLine = c.value === true
+      if (c.key === 'agentPushNotifEnabled') claude.push = c.value === true
+      if (c.key === 'inputNeededNotifEnabled') claude.needInput = c.value === true
+      return { ...h, keep, controls: { ...h.controls, claude } }
+    }
+    case 'hub-switchboard': return { ...h, controls: { ...h.controls, switchboard: { ...h.controls.switchboard, [c.key]: c.value } } }
+    case 'hub-toggle': return { ...h, installed: h.installed.map(i => (i.kind === c.kind && i.name === c.name ? { ...i, enabled: c.enabled } : i)) }
+    case 'hub-rc': {
+      if (!c.sessionId) return { ...h, rc: { ...h.rc, atStartup: c.on } }
+      const bridgeId = `session_01${c.sessionId}`
+      return { ...h, chats: h.chats.map(x => (x.sessionId !== c.sessionId ? x : c.on ? { ...x, bridgeId, link: `https://claude.ai/code/${bridgeId}`, why: [] } : { ...x, bridgeId: undefined, link: 'https://claude.ai/code', why: ['not connected'] })) }
+    }
+    case 'hub-star': {
+      if (!c.on) return { ...h, starred: h.starred.filter(s => s.sessionId !== c.sessionId) }
+      const chat = h.chats.find(x => x.sessionId === c.sessionId), row = h.sessions.find(x => x.sessionId === c.sessionId)
+      const resume = c.ai === 'codex' ? `codex resume ${c.sessionId}` : `claude --resume ${c.sessionId}`
+      return { ...h, starred: [...h.starred.filter(s => s.sessionId !== c.sessionId), { sessionId: c.sessionId, ai: c.ai, name: chat?.name ?? row?.label ?? c.sessionId.slice(0, 8), cwd: chat?.cwd ?? '', starredAt: Date.now(), live: !!chat?.live, digest: { resume } }] }
+    }
+    case 'hub-new-chat': {
+      // The extension asks a model for the name; the demo takes the goal's first five words.
+      const first = (c.text ?? '').split(/\s+/).filter(Boolean).slice(0, 5).join(' ')
+      const name = first ? first[0].toUpperCase() + first.slice(1) : 'New chat'
+      const sessionId = `d-new-${h.chats.length + 1}`, now = Date.now()
+      return {
+        ...h,
+        chats: [{ pid: 0, sessionId, name, cwd: c.path, link: '', live: true, why: [] }, ...h.chats],
+        progress: [{ sessionId, cwd: c.path, state: 'working', roles: [], tasks: [], startedAt: now, at: now }, ...h.progress],
+        ...(h.tools ? { tools: { ...h.tools, pick: null, chats: { ...h.tools.chats, [sessionId]: c.tools ?? demoPick(h, c.text ?? '') } } } : {}),
+      }
+    }
+    case 'hub-pick-tools': return h.tools ? { ...h, tools: { ...h.tools, pick: { goal: c.text, profile: demoPick(h, c.text) } } } : h
+    case 'hub-chat-tools': return h.tools ? { ...h, tools: { ...h.tools, chats: { ...h.tools.chats, [c.sessionId]: c.tools } } } : h
+    case 'hub-focus-chat': return h
+    case 'hub-changes': {
+      const cwd = h.chats.find(x => x.sessionId === c.sessionId)?.cwd ?? ''
+      return { ...h, changes: { sessionId: c.sessionId, cwd, files: CHANGES[c.sessionId] ?? [], at: Date.now() } }
+    }
+    case 'hub-search': {
+      const q = c.q.trim()
+      if (!q) return { ...h, search: null }
+      const hits = h.archive.flatMap(a => {
+        const text = NOTES[a.sessionId] ?? '', at = text.toLowerCase().indexOf(q.toLowerCase())
+        return at < 0 ? [] : [{ sessionId: a.sessionId, snippet: `${at > 30 ? '...' : ''}${text.slice(Math.max(0, at - 30), at + q.length + 50)}...` }]
+      })
+      return { ...h, search: { q, hits } }
+    }
+    case 'hub-aws-default': {
+      const to = h.aws.find(a => a.name === c.profile), was = h.aws.find(a => a.isDefault)
+      if (!to || to.isDefault) return h
+      const backup = was && was.account !== to.account ? [{ ...was, name: 'previous-default-demo', isDefault: false }] : []
+      return { ...h, aws: [...h.aws.map(a => a.isDefault ? { ...to, name: a.name, isDefault: true } : a), ...backup] }
+    }
+    case 'hub-aws-label': {
+      const row = h.aws.find(a => a.name === c.profile)
+      if (!row) return h
+      const same = (a: typeof row) => (row.account ? a.account === row.account : a.name === row.name)
+      return { ...h, aws: h.aws.map(a => same(a) ? { ...a, label: c.label.trim() || undefined } : a) }
+    }
+    case 'hub-aws-add':
+      return h.aws.some(a => a.name === c.profile) ? h : { ...h, aws: [...h.aws, { name: c.profile, isDefault: false, region: c.region, status: 'never', chrome: c.chrome ?? '', checkedAt: Date.now() }] }
+    case 'hub-aws-login':
+      return { ...h, aws: h.aws.map(a => a.name === c.profile ? { ...a, status: 'signed-in', chrome: c.chrome ?? '' } : a) }
+    case 'hub-aws-window': {
+      const w = h.signIns.window
+      if (!w) return h
+      const { [w]: _was, ...rest } = h.signIns.projects
+      return { ...h, signIns: { ...h.signIns, projects: c.profile === null ? rest : { ...rest, [w]: c.profile } } }
+    }
+    case 'hub-role-model': return { ...h, installed: h.installed.map(i => (i.kind === 'role' && i.name === c.role ? { ...i, model: c.model } : i)) }
+    case 'hub-aws-delete':
+      return h.aws.some(a => a.name === c.profile && !a.isDefault) ? { ...h, aws: h.aws.filter(a => a.name !== c.profile) } : h
+    case 'hub-login-app-add': {
+      const apps = h.signIns.apps ?? []
+      if (!c.name.trim() || apps.some(a => a.name.toLowerCase() === c.name.trim().toLowerCase())) return h
+      return { ...h, signIns: { ...h.signIns, apps: [...apps, { id: `app-${Date.now()}`, name: c.name.trim(), url: c.url, logins: [] }] } }
+    }
+    case 'hub-login-app-delete':
+      return { ...h, signIns: { ...h.signIns, apps: (h.signIns.apps ?? []).filter(a => a.id !== c.app) } }
+    case 'hub-login-add':
+    case 'hub-login-open':
+    case 'hub-login-active':
+    case 'hub-login-rename':
+    case 'hub-login-delete': {
+      const apps = (h.signIns.apps ?? []).map(a => {
+        if (a.id !== c.app) return a
+        if (c.type === 'hub-login-add') {
+          const id = `l-${Date.now()}`
+          return { ...a, logins: [...a.logins, { id, label: c.label.trim(), url: c.url, chrome: c.chrome }], active: a.active ?? id }
+        }
+        if (c.type === 'hub-login-active') return { ...a, active: c.id }
+        if (c.type === 'hub-login-delete') {
+          const logins = a.logins.filter(l => l.id !== c.id)
+          return { ...a, logins, active: a.active === c.id ? logins[0]?.id : a.active }
+        }
+        return { ...a, logins: a.logins.map(l => l.id !== c.id ? l : c.type === 'hub-login-rename' ? { ...l, label: c.label.trim() || l.label } : { ...l, chrome: c.chrome ?? l.chrome }) }
+      })
+      return { ...h, signIns: { ...h.signIns, apps } }
+    }
+    case 'hub-dev-start':
+    case 'hub-dev-stop': {
+      const row = h.dev?.find(d => d.folder === c.folder)
+      if (!row) return h
+      const { port: _p, link: _l, ...stopped } = row
+      const next = c.type === 'hub-dev-stop' ? stopped : row.port ? row : { ...row, port: 5173, link: `${DEMO_TAILNET}:15173` }
+      return { ...h, dev: h.dev?.map(d => (d === row ? next : d)) }
+    }
+    case 'hub-awake': return { ...h, awake: c.on }
+    case 'hub-rc-server': return { ...h, rcServers: h.rcServers.map(r => (r.folder === c.folder ? { ...r, on: c.on } : r)) }
+    default: return h
+  }
+}

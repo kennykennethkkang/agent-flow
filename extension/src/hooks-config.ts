@@ -9,7 +9,7 @@ import {
 } from './discovery'
 import {
   readSettingsFile, writeJsonAtomic,
-  mergeAgentFlowHooks, hasAgentFlowHook, migrateLegacyHttpHooks,
+  mergeAgentFlowHooks, hasAgentFlowHook, migrateLegacyHttpHooks, missingHookEvents, HOOK_EVENTS,
 } from './hook-entries'
 import { createLogger } from './logger'
 
@@ -57,11 +57,6 @@ function hasAgentFlowHooks(settingsPath: string): boolean {
 
 // ─── Configure ────────────────────────────────────────────────────────────────
 
-const HOOK_EVENTS = [
-  'SessionStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
-  'SubagentStart', 'SubagentStop', 'Notification', 'Stop', 'SessionEnd',
-] as const
-
 export async function configureClaudeHooks(): Promise<void> {
   ensureHookScript()
 
@@ -74,7 +69,7 @@ export async function configureClaudeHooks(): Promise<void> {
     // permissions, env and other tools' hooks.
     log.error(`Not configuring hooks, could not parse ${GLOBAL_SETTINGS_PATH}:`, result.error)
     vscode.window.showErrorMessage(
-      `Agent Flow could not read ${GLOBAL_SETTINGS_PATH} (${result.error}). Fix the file and run "Agent Flow: Configure Claude Code Hooks" again.`,
+      `Switchboard could not read ${GLOBAL_SETTINGS_PATH} (${result.error}). Fix the file and run "Switchboard: Configure Claude Code Hooks" again.`,
     )
     return
   }
@@ -82,7 +77,7 @@ export async function configureClaudeHooks(): Promise<void> {
   writeJsonAtomic(GLOBAL_SETTINGS_PATH, mergeAgentFlowHooks(result.settings, hookEntry, HOOK_EVENTS))
 
   vscode.window.showInformationMessage(
-    'Claude Code hooks configured. New sessions will stream events to Agent Flow.',
+    'Claude Code hooks configured. New sessions will stream events to Switchboard.',
   )
 }
 
@@ -131,6 +126,25 @@ export function isDisable1MContext(): boolean {
 // ─── Prompt ───────────────────────────────────────────────────────────────────
 
 export async function promptHookSetupIfNeeded(_context: vscode.ExtensionContext): Promise<void> {
-  if (hooksAlreadyConfigured()) { return }
+  if (hooksAlreadyConfigured()) { addNewHookEvents(); return }
   await configureClaudeHooks()
+}
+
+/** An install from before an event joined HOOK_EVENTS gets our entry for it; every other entry stays as it is. */
+function addNewHookEvents(): void {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+  const paths = [GLOBAL_SETTINGS_PATH, ...(workspaceFolder ? [path.join(workspaceFolder, '.claude', 'settings.local.json')] : [])]
+  const hookEntry = { hooks: [{ type: 'command', command: getHookCommand(), timeout: HOOK_TIMEOUT_S }] }
+  for (const settingsPath of paths) {
+    const result = readSettingsFile(settingsPath)
+    if (!result.ok || !hasAgentFlowHook(result.settings)) { continue }
+    const missing = missingHookEvents(result.settings, HOOK_EVENTS)
+    if (!missing.length) { continue }
+    try {
+      writeJsonAtomic(settingsPath, mergeAgentFlowHooks(result.settings, hookEntry, missing))
+      log.info(`Added hooks for ${missing.join(', ')} in ${settingsPath}`)
+    } catch (err) {
+      log.error(`Failed to add hooks to ${settingsPath}:`, err)
+    }
+  }
 }

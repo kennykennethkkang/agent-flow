@@ -1,3 +1,4 @@
+import type { AiId, ChatProfile, HubState, SettingKey, SwitchboardKey } from './hub/types'
 /**
  * Message protocol between VS Code extension host and webview.
  *
@@ -48,6 +49,9 @@ export type ExtensionToWebviewMessage =
   | { type: 'session-started'; session: SessionInfo }
   | { type: 'session-ended'; sessionId: string }
   | { type: 'session-updated'; sessionId: string; label: string }
+  | { type: 'hub-state'; hub: HubState }
+  /** The view was hidden or shown: a hidden view stops its animation (VS Code keeps it alive but sets no document.hidden). */
+  | { type: 'hub-visible'; visible: boolean }
 
 export interface VisualizerConfig {
   mode: 'live' | 'replay'
@@ -64,6 +68,52 @@ export type WebviewToExtensionMessage =
   | { type: 'request-disconnect' }
   | { type: 'open-file'; filePath: string; line?: number }
   | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string }
+  | { type: 'hub-refresh' }
+  | { type: 'hub-send'; sessionId: string; text: string }
+  | { type: 'hub-rc'; on: boolean; sessionId?: string }
+  | { type: 'hub-open-url'; url: string }
+  | { type: 'hub-web'; phone: boolean }
+  | { type: 'hub-stop-server'; pid: number; confirmed?: boolean }
+  | { type: 'hub-toggle'; kind: 'mod' | 'plugin' | 'skill'; name: string; enabled: boolean }
+  | { type: 'hub-setting'; key: SettingKey; value: boolean | number | string | null }
+  | { type: 'hub-switchboard'; key: SwitchboardKey; value: boolean | number | string | null }
+  | { type: 'hub-vscode'; action: 'reload' | 'restart' }
+  | { type: 'hub-compact'; sessionId: string }
+  | { type: 'hub-open-project'; path: string; newWindow: boolean }
+  | { type: 'hub-clone'; repo: string; newWindow: boolean }
+  | { type: 'hub-new-chat'; path: string; text?: string; remote: boolean; branch?: string; ai?: AiId; tools?: ChatProfile }
+  | { type: 'hub-pick-tools'; text: string }
+  | { type: 'hub-chat-tools'; sessionId: string; tools: ChatProfile }
+  | { type: 'hub-star'; sessionId: string; ai: AiId; on: boolean }
+  | { type: 'hub-resume'; sessionId: string; ai: AiId }
+  | { type: 'hub-open-note'; sessionId: string }
+  | { type: 'hub-focus-chat'; sessionId: string }
+  | { type: 'hub-keep'; onFull?: 'compact' | 'fresh'; freshBranch?: boolean }
+  | { type: 'hub-aws-login'; profile: string; chrome?: string }
+  | { type: 'hub-aws-default'; profile: string }
+  | { type: 'hub-aws-label'; profile: string; label: string }
+  | { type: 'hub-aws-add'; profile: string; region: string; chrome?: string }
+  | { type: 'hub-aws-window'; profile: string | null }
+  | { type: 'hub-aws-check' }
+  | { type: 'hub-aws-delete'; profile: string }
+  | { type: 'hub-login-app-add'; name: string; url: string }
+  | { type: 'hub-login-add'; app: string; label: string; url: string; chrome?: string }
+  | { type: 'hub-login-open'; app: string; id: string; chrome?: string }
+  | { type: 'hub-login-active'; app: string; id: string }
+  | { type: 'hub-login-rename'; app: string; id: string; label: string }
+  | { type: 'hub-login-delete'; app: string; id: string }
+  | { type: 'hub-login-app-delete'; app: string }
+  | { type: 'hub-kit-export' }
+  | { type: 'hub-rules-sync' }
+  | { type: 'hub-role-model'; role: string; model: 'inherit' | 'fable' | 'opus' | 'sonnet' | 'haiku' }
+  | { type: 'hub-rc-server'; folder: string; on: boolean }
+  | { type: 'hub-handoff'; sessionId: string }
+  | { type: 'hub-dev-start'; folder: string }
+  | { type: 'hub-dev-stop'; folder: string }
+  | { type: 'hub-awake'; on: boolean }
+  | { type: 'hub-changes'; sessionId: string }
+  | { type: 'hub-open-diff'; sessionId: string; file: string }
+  | { type: 'hub-search'; q: string }
 
 // ─── Transcript Types (from Claude Code JSONL files) ─────────────────────────
 

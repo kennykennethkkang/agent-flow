@@ -68,7 +68,7 @@ function sessionsRoot(): string {
  *  Codex's CLI partitioning can use either local or UTC dates depending on the
  *  platform; yield both to be safe. The 3-day window + dedup-via-Set makes this
  *  trivially cheap. */
-function recentSessionDirs(now: Date): string[] {
+export function recentSessionDirs(now: Date): string[] {
   const root = sessionsRoot()
   const seen = new Set<string>()
   for (let i = 0; i < SCAN_DAYS; i++) {

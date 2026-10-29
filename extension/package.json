@@ -1,47 +1,76 @@
 {
-  "name": "agent-flow",
-  "displayName": "Agent Flow",
-  "description": "Real-time visualization of Claude Code and Codex agent orchestration",
-  "version": "0.9.2",
-  "publisher": "simon-p",
+  "name": "switchboard",
+  "displayName": "Switchboard",
+  "description": "Claude Code sessions, usage, timeline and controls in one panel. Based on Agent Flow.",
+  "version": "0.17.22",
+  "publisher": "kennykennethkkang",
   "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/patoles/agent-flow"
-  },
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Visualization", "Other"],
-  "keywords": ["llm", "agent", "claude", "codex", "ai", "visualization", "orchestration"],
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "llm",
+    "agent",
+    "claude",
+    "codex",
+    "ai",
+    "visualization",
+    "orchestration"
+  ],
   "activationEvents": [
-    "onWebviewPanel:agentVisualizer"
+    "onStartupFinished",
+    "onWebviewPanel:agentVisualizer",
+    "onView:switchboard.view"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "agentVisualizer.open",
-        "title": "Open Agent Flow",
-        "category": "Agent Flow"
+        "title": "Switchboard: Open"
       },
       {
         "command": "agentVisualizer.openToSide",
-        "title": "Open Agent Flow to Side",
-        "category": "Agent Flow"
+        "title": "Switchboard: Open to the Side"
       },
       {
         "command": "agentVisualizer.connectToAgent",
-        "title": "Connect to Running Agent",
-        "category": "Agent Flow"
+        "title": "Switchboard: Connect to Running Agent"
       },
       {
         "command": "agentVisualizer.configureHooks",
-        "title": "Configure Claude Code Hooks",
-        "category": "Agent Flow"
+        "title": "Switchboard: Configure Claude Code Hooks"
+      },
+      {
+        "command": "agentVisualizer.openInEditor",
+        "title": "Open Switchboard in editor",
+        "icon": "$(link-external)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "switchboard",
+          "title": "Switchboard",
+          "icon": "media/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "switchboard": [
+        {
+          "type": "webview",
+          "id": "switchboard.view",
+          "name": "Switchboard",
+          "icon": "media/activitybar.svg"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "agentVisualizer.open",
@@ -50,11 +79,15 @@
       }
     ],
     "configuration": {
-      "title": "Agent Flow",
+      "title": "Switchboard",
       "properties": {
         "agentVisualizer.runtime": {
           "type": "string",
-          "enum": ["auto", "claude", "codex"],
+          "enum": [
+            "auto",
+            "claude",
+            "codex"
+          ],
           "enumDescriptions": [
             "Watch both Claude Code and Codex sessions concurrently (default)",
             "Watch only Claude Code sessions",
@@ -79,10 +112,25 @@
           "description": "Automatically open the visualizer when an agent session starts"
         }
       }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentVisualizer.openInEditor",
+          "when": "view == switchboard.view",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "agentVisualizer.openInEditor",
+          "when": "false"
+        }
+      ]
     }
   },
   "scripts": {
-    "vscode:prepublish": "cp ../README.md ./README.md && pnpm run build:all",
+    "vscode:prepublish": "node ../app/build.js && pnpm run build:all",
     "build": "node esbuild.js",
     "build:webview": "cd ../web && pnpm run build:webview",
     "build:all": "pnpm run build:webview && pnpm run build",
@@ -94,8 +142,8 @@
     "vscode:uninstall": "node scripts/uninstall.js"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
     "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
     "esbuild": "^0.20.0",
     "tsx": "^4.19.0",
     "typescript": "^5.3.0"

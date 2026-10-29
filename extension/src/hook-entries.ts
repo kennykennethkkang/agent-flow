@@ -33,6 +33,12 @@ export function isAgentFlowHook(entry: ClaudeHookEntry): boolean {
   return !!entry?.hooks?.some(isAgentFlowHookDef)
 }
 
+/** The Claude Code events Switchboard registers for; scripts/setup.js keeps the same list. */
+export const HOOK_EVENTS = [
+  'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
+  'SubagentStart', 'SubagentStop', 'Notification', 'Stop', 'SessionEnd',
+] as const
+
 export type SettingsReadResult =
   | { ok: true; settings: Record<string, unknown> }
   | { ok: false; error: string }
@@ -87,6 +93,23 @@ export function mergeAgentFlowHooks(
   return settings
 }
 
+/**
+ * Remove our entries from every event, dropping events and the hooks key once
+ * they are empty. Other tools' hooks stay. Mutates and returns `settings`.
+ */
+export function removeAgentFlowHooks(settings: Record<string, unknown>): Record<string, unknown> {
+  const hooks = settings.hooks
+  if (!hooks || typeof hooks !== 'object') { return settings }
+  const byEvent = hooks as Record<string, unknown>
+  for (const [event, entries] of Object.entries(byEvent)) {
+    if (!Array.isArray(entries)) { continue }
+    const kept = entries.filter(entry => !isAgentFlowHook(entry as ClaudeHookEntry))
+    if (kept.length) { byEvent[event] = kept } else { delete byEvent[event] }
+  }
+  if (Object.keys(byEvent).length === 0) { delete settings.hooks }
+  return settings
+}
+
 /** True if any event in `settings` has an Agent Flow hook. */
 export function hasAgentFlowHook(settings: Record<string, unknown>): boolean {
   const hooks = settings.hooks
@@ -94,6 +117,12 @@ export function hasAgentFlowHook(settings: Record<string, unknown>): boolean {
   return Object.values(hooks).some(entries =>
     Array.isArray(entries) && entries.some(entry => isAgentFlowHook(entry as ClaudeHookEntry)),
   )
+}
+
+/** The events in `events` that have no Agent Flow hook yet, so an older install can get newly added ones. */
+export function missingHookEvents(settings: Record<string, unknown>, events: readonly string[]): string[] {
+  const hooks = (settings.hooks && typeof settings.hooks === 'object' ? settings.hooks : {}) as Record<string, unknown>
+  return events.filter(e => !(Array.isArray(hooks[e]) && (hooks[e] as ClaudeHookEntry[]).some(isAgentFlowHook)))
 }
 
 /**

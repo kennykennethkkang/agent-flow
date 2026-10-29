@@ -1,5 +1,5 @@
 /**
- * VS Code Bridge — enables the visualizer to communicate with the VS Code extension host.
+ * VS Code Bridge: enables the visualizer to communicate with the VS Code extension host.
  *
  * When running standalone (npm run dev), this is a no-op.
  * When running inside a VS Code webview iframe, it forwards messages
@@ -8,12 +8,63 @@
 
 export type { AgentEvent, SessionInfo, ConnectionStatus } from './bridge-types'
 import type { AgentEvent, SessionInfo, ConnectionStatus } from './bridge-types'
+import type { AiId, ChatProfile, HubState, SettingKey, SwitchboardKey } from './hub-types'
 
 type InitCallback = () => void
 type EventCallback = (event: AgentEvent) => void
 type StatusCallback = (status: ConnectionStatus, source: string) => void
 type ConfigCallback = (config: Partial<{ mode: string; autoPlay: boolean; showMockData: boolean; disable1MContext: boolean }>) => void
 type SessionCallback = (type: 'list' | 'started' | 'ended' | 'updated' | 'reset', data: SessionInfo[] | SessionInfo | string | { sessionId: string; label: string }) => void
+type HubCallback = (hub: HubState) => void
+
+/** What the Hub sends back to the extension. */
+export type HubCommand =
+  | { type: 'hub-refresh' }
+  | { type: 'hub-send'; sessionId: string; text: string }
+  | { type: 'hub-rc'; on: boolean; sessionId?: string }
+  | { type: 'hub-open-url'; url: string }
+  | { type: 'hub-web'; phone: boolean }
+  | { type: 'hub-stop-server'; pid: number; confirmed?: boolean }
+  | { type: 'hub-toggle'; kind: 'mod' | 'plugin' | 'skill'; name: string; enabled: boolean }
+  | { type: 'hub-setting'; key: SettingKey; value: boolean | number | string | null }
+  | { type: 'hub-switchboard'; key: SwitchboardKey; value: boolean | number | string | null }
+  | { type: 'hub-vscode'; action: 'reload' | 'restart' }
+  | { type: 'hub-compact'; sessionId: string }
+  | { type: 'hub-open-project'; path: string; newWindow: boolean }
+  | { type: 'hub-clone'; repo: string; newWindow: boolean }
+  | { type: 'hub-new-chat'; path: string; text?: string; remote: boolean; branch?: string; ai?: AiId; tools?: ChatProfile }
+  | { type: 'hub-pick-tools'; text: string }
+  | { type: 'hub-chat-tools'; sessionId: string; tools: ChatProfile }
+  | { type: 'hub-star'; sessionId: string; ai: AiId; on: boolean }
+  | { type: 'hub-resume'; sessionId: string; ai: AiId }
+  | { type: 'hub-open-note'; sessionId: string }
+  | { type: 'hub-focus-chat'; sessionId: string }
+  | { type: 'hub-keep'; onFull?: 'compact' | 'fresh'; freshBranch?: boolean }
+  | { type: 'hub-aws-login'; profile: string; chrome?: string }
+  | { type: 'hub-aws-default'; profile: string }
+  | { type: 'hub-aws-label'; profile: string; label: string }
+  | { type: 'hub-aws-add'; profile: string; region: string; chrome?: string }
+  | { type: 'hub-aws-window'; profile: string | null }
+  | { type: 'hub-aws-check' }
+  | { type: 'hub-aws-delete'; profile: string }
+  | { type: 'hub-login-app-add'; name: string; url: string }
+  | { type: 'hub-login-add'; app: string; label: string; url: string; chrome?: string }
+  | { type: 'hub-login-open'; app: string; id: string; chrome?: string }
+  | { type: 'hub-login-active'; app: string; id: string }
+  | { type: 'hub-login-rename'; app: string; id: string; label: string }
+  | { type: 'hub-login-delete'; app: string; id: string }
+  | { type: 'hub-login-app-delete'; app: string }
+  | { type: 'hub-kit-export' }
+  | { type: 'hub-rules-sync' }
+  | { type: 'hub-role-model'; role: string; model: 'inherit' | 'fable' | 'opus' | 'sonnet' | 'haiku' }
+  | { type: 'hub-rc-server'; folder: string; on: boolean }
+  | { type: 'hub-handoff'; sessionId: string }
+  | { type: 'hub-dev-start'; folder: string }
+  | { type: 'hub-dev-stop'; folder: string }
+  | { type: 'hub-awake'; on: boolean }
+  | { type: 'hub-changes'; sessionId: string }
+  | { type: 'hub-open-diff'; sessionId: string; file: string }
+  | { type: 'hub-search'; q: string }
 
 class VSCodeBridge {
   private _isVSCode = false
@@ -25,6 +76,11 @@ class VSCodeBridge {
   private statusListeners: StatusCallback[] = []
   private configListeners: ConfigCallback[] = []
   private sessionListeners: SessionCallback[] = []
+  private hubListeners: HubCallback[] = []
+  private lastHub: HubState | null = null
+  private shownListeners: Array<() => void> = []
+  /** False while VS Code keeps this view alive but hidden (sidebar collapsed, tab in the background). */
+  shown = true
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -101,6 +157,14 @@ class VSCodeBridge {
           cb('updated', { sessionId: data.sessionId, label: data.label })
         }
         break
+      case 'hub-state':
+        this.lastHub = data.hub
+        for (const cb of this.hubListeners) cb(data.hub)
+        break
+      case 'hub-visible':
+        this.shown = data.visible !== false
+        for (const cb of this.shownListeners) cb()
+        break
     }
   }
 
@@ -143,10 +207,25 @@ class VSCodeBridge {
     return this.subscribe(this.sessionListeners, callback)
   }
 
+  /** Subscribe to the Hub's state; a late subscriber gets the last one at once. */
+  onHub(callback: HubCallback): () => void {
+    if (this.lastHub) callback(this.lastHub)
+    return this.subscribe(this.hubListeners, callback)
+  }
+
+  /** Called when the view is hidden or shown again; read `shown`. */
+  onShown(callback: () => void): () => void {
+    return this.subscribe(this.shownListeners, callback)
+  }
+
   // ─── Send commands to extension ──────────────────────────────────────────
 
   openFile(filePath: string, line?: number): void {
     this.postToExtension({ type: 'open-file', filePath, line })
+  }
+
+  sendHub(command: HubCommand): void {
+    this.postToExtension(command)
   }
 
   private postToExtension(message: Record<string, unknown>): void {
@@ -175,8 +254,10 @@ class VSCodeBridge {
     this.statusListeners = []
     this.configListeners = []
     this.sessionListeners = []
+    this.hubListeners = []
+    this.shownListeners = []
   }
 }
 
-// Singleton — safe to import from anywhere
+// Singleton, safe to import from anywhere
 export const vscodeBridge = typeof window !== 'undefined' ? new VSCodeBridge() : null

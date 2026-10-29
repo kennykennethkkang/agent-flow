@@ -26,6 +26,8 @@ import {
   writeDiscoveryFile, removeDiscoveryFile, ensureHookScript,
 } from './discovery'
 import { createLogger } from './logger'
+import { hub } from './hub/hub-service'
+import { notify } from './hub/notify'
 import { wireWatcherToPanel } from './session-runtime'
 import type { AgentRuntime } from './session-runtime'
 
@@ -86,9 +88,14 @@ export async function startClaudeRuntime(
 
   // Route hook events → panel, but filter out events the watcher already owns
   if (hookPort !== HOOK_SERVER_NOT_STARTED) {
+    hookServer.onRaw(payload => {
+      const change = hub.hook(payload)
+      if (change) notify(change)
+    })
     hookServer.onEvent((event) => {
-      const panel = VisualizerPanel.getCurrent()
-      if (!panel || !panel.isReady) return
+      const panels = VisualizerPanel.ready()
+      if (panels.length === 0) return
+      const panel = { sendEvent: (e: AgentEvent) => { for (const p of panels) p.sendEvent(e) } }
 
       const eventSessionId = event.sessionId
       const watcherHandlesThis = eventSessionId
@@ -115,7 +122,7 @@ export async function startClaudeRuntime(
       }
 
       panel.sendEvent(event)
-      panel.setConnectionStatus('watching', `Claude Code hooks (:${hookPort})`)
+      for (const p of panels) p.setConnectionStatus('watching', `Claude Code hooks (:${hookPort})`)
     })
   }
 

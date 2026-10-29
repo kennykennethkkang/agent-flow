@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client'
-import { AgentVisualizer } from './components/agent-visualizer'
+import { Switchboard } from './components/switchboard/switchboard'
 import { vscodeBridge } from './lib/vscode-bridge'
 import './app/globals.css'
 
@@ -18,4 +18,4 @@ if (vscodeBridge) {
 const rootElement = document.getElementById('root')
 if (!rootElement) throw new Error('Root element #root not found')
 const root = createRoot(rootElement)
-root.render(<AgentVisualizer />)
+root.render(<Switchboard />)

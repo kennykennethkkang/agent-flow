@@ -27,3 +27,31 @@ extension/.vscode/
 extension/package-lock.json
 
 .DS_Store
+
+.superpowers/
+
+# Secrets: never commit keys, tokens or env files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+*.secret
+secrets/
+credentials*.json
+service-account*.json
+.npmrc
+.netrc
+
+# Local tool output (can contain page contents and logs)
+.playwright-mcp/
+playwright-report/
+test-results/
+coverage/
+*.log
+extension/rl-*.jsonl
+*.bad-*
+*.before-kit

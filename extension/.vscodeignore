@@ -11,3 +11,5 @@ tsconfig.json
 **/*.ts
 !dist/**
 .next/**
+# Stray logs and test leftovers never ship
+*.jsonl

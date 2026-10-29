@@ -20,11 +20,28 @@ function getNonce(): string {
   return text
 }
 
+function webviewOptions(extensionUri: vscode.Uri): vscode.WebviewOptions {
+  return {
+    enableScripts: true,
+    localResourceRoots: [
+      vscode.Uri.joinPath(extensionUri, 'dist'),
+      vscode.Uri.joinPath(extensionUri, 'media'),
+    ],
+  }
+}
+
+/** The Switchboard UI in an editor tab; the Activity Bar view only opens one. */
 export class VisualizerPanel implements vscode.Disposable {
   public static readonly viewType = 'agentVisualizer'
+  public static readonly sidebarViewType = 'switchboard.view'
+  /** The editor tab, revealed instead of opening a second one. */
   private static instance: VisualizerPanel | undefined
+  /** Every open view. */
+  private static readonly live = new Set<VisualizerPanel>()
+  /** While set, only this view gets messages: a replay for a view that just opened must not repeat into the others. */
+  private static replayTarget: VisualizerPanel | undefined
 
-  private readonly panel: vscode.WebviewPanel
+  private readonly panel: vscode.WebviewPanel | vscode.WebviewView
   private readonly extensionUri: vscode.Uri
   private readonly disposables: vscode.Disposable[] = []
   private readonly _onCommand = new vscode.EventEmitter<WebviewToExtensionMessage>()
@@ -42,9 +59,10 @@ export class VisualizerPanel implements vscode.Disposable {
   get isReady(): boolean { return this._ready }
   markReady(): void { this._ready = true }
 
-  private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri) {
+  private constructor(panel: vscode.WebviewPanel | vscode.WebviewView, extensionUri: vscode.Uri) {
     this.panel = panel
     this.extensionUri = extensionUri
+    VisualizerPanel.live.add(this)
 
     this.panel.webview.html = this.getHtml()
 
@@ -59,33 +77,24 @@ export class VisualizerPanel implements vscode.Disposable {
 
     // Cleanup on dispose
     this.panel.onDidDispose(
-      () => {
-        VisualizerPanel.instance = undefined
-        this.dispose()
-      },
+      () => this.dispose(),
       undefined,
       this.disposables,
     )
   }
 
-  static create(extensionUri: vscode.Uri, column: vscode.ViewColumn): VisualizerPanel {
+  /** preserveFocus: a replacement opened in the background, which also leaves an existing tab where it is. */
+  static create(extensionUri: vscode.Uri, column: vscode.ViewColumn, preserveFocus = false): VisualizerPanel {
     if (VisualizerPanel.instance) {
-      VisualizerPanel.instance.panel.reveal(column)
+      if (!preserveFocus) (VisualizerPanel.instance.panel as vscode.WebviewPanel).reveal(column)
       return VisualizerPanel.instance
     }
 
     const panel = vscode.window.createWebviewPanel(
       VisualizerPanel.viewType,
-      'Agent Flow',
-      column,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [
-          vscode.Uri.joinPath(extensionUri, 'dist'),
-          vscode.Uri.joinPath(extensionUri, 'media'),
-        ],
-      },
+      'Switchboard',
+      { viewColumn: column, preserveFocus },
+      { ...webviewOptions(extensionUri), retainContextWhenHidden: true },
     )
 
     panel.iconPath = {
@@ -97,13 +106,48 @@ export class VisualizerPanel implements vscode.Disposable {
     return VisualizerPanel.instance
   }
 
-  static revive(panel: vscode.WebviewPanel, extensionUri: vscode.Uri): VisualizerPanel {
+  /** The columns where an editor tab of this extension host is on screen. */
+  static tabColumns(): number[] {
+    return [...VisualizerPanel.live].flatMap(v => 'viewColumn' in v.panel && v.panel.visible && v.panel.viewColumn ? [v.panel.viewColumn] : [])
+  }
+
+  /** A restored tab; undefined, and the restored one closed, when the Activity Bar icon already opened a tab this start. */
+  static revive(panel: vscode.WebviewPanel, extensionUri: vscode.Uri): VisualizerPanel | undefined {
+    if (VisualizerPanel.instance) { panel.dispose(); return undefined }
     VisualizerPanel.instance = new VisualizerPanel(panel, extensionUri)
     return VisualizerPanel.instance
   }
 
-  static getCurrent(): VisualizerPanel | undefined {
-    return VisualizerPanel.instance
+  /** Every open view, or only the one being replayed to. */
+  static all(): VisualizerPanel[] {
+    return VisualizerPanel.replayTarget ? [VisualizerPanel.replayTarget] : [...VisualizerPanel.live]
+  }
+
+  /** The open views that finished their replay, for live events. */
+  static ready(): VisualizerPanel[] {
+    return VisualizerPanel.all().filter(p => p.isReady)
+  }
+
+  /** Runs a synchronous replay with every message going to this view only. */
+  static replayTo(panel: VisualizerPanel, replay: () => void): void {
+    VisualizerPanel.replayTarget = panel
+    try { replay() } finally { VisualizerPanel.replayTarget = undefined }
+  }
+
+  /** Whether the view is on screen: false while the sidebar is collapsed or the tab is in the background. */
+  get visible(): boolean { return this.panel.visible }
+
+  /** Fires with the new visibility each time the view is hidden or shown. */
+  onDidChangeVisible(listener: (visible: boolean) => void): void {
+    const p = this.panel
+    let last = p.visible
+    const fire = () => { if (p.visible !== last) { last = p.visible; listener(last) } }
+    this.disposables.push('onDidChangeVisibility' in p ? p.onDidChangeVisibility(fire) : p.onDidChangeViewState(fire))
+  }
+
+  /** Not kept in this.disposables: dispose() runs from the same event and would drop the listener before it fires. */
+  onDidDispose(listener: () => void): void {
+    this.panel.onDidDispose(listener)
   }
 
   /** Send a typed message to the webview (fails silently if panel is disposed) */
@@ -259,8 +303,7 @@ export class VisualizerPanel implements vscode.Disposable {
   />
   <link rel="stylesheet" href="${styleUri}">
   <style>
-    html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: ${WEBVIEW_BG_COLOR}; }
-    #root { height: 100%; }
+    html, body { margin: 0; padding: 0; background: ${WEBVIEW_BG_COLOR}; }
   </style>
 </head>
 <body>
@@ -271,7 +314,8 @@ export class VisualizerPanel implements vscode.Disposable {
   }
 
   dispose(): void {
-    VisualizerPanel.instance = undefined
+    if (VisualizerPanel.instance === this) VisualizerPanel.instance = undefined
+    VisualizerPanel.live.delete(this)
     for (const d of this.disposables) {
       d.dispose()
     }

@@ -5,6 +5,7 @@ export function parseArgs(argv: string[]) {
   let port = DEFAULT_RELAY_PORT
   let open = true
   let verbose = false
+  let lan = false
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
@@ -14,6 +15,8 @@ export function parseArgs(argv: string[]) {
       i++
     } else if (arg === '--no-open') {
       open = false
+    } else if (arg === '--lan') {
+      lan = true
     } else if (arg === '--verbose' || arg === '-v') {
       verbose = true
     } else if (arg === '--help' || arg === '-h') {
@@ -23,6 +26,7 @@ Usage: agent-flow [options]
 Options:
   -p, --port <number>  Port for the server (default: ${DEFAULT_RELAY_PORT})
   --no-open            Don't open the browser automatically
+  --lan                Also listen on this Mac's Wi-Fi and Tailscale addresses, for a phone (needs the QR secret)
   -v, --verbose        Show detailed event logs
   -h, --help           Show this help message
 `)
@@ -30,5 +34,5 @@ Options:
     }
   }
 
-  return { port, open, verbose }
+  return { port, open, verbose, lan }
 }

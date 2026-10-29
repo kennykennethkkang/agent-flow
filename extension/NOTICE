@@ -1,0 +1,3 @@
+Switchboard is a personal fork of Agent Flow (https://github.com/patoles/agent-flow) by Simon Patole, used under the Apache License 2.0.
+Agent Flow is a trademark of Simon Patole. Switchboard is not affiliated with or endorsed by the Agent Flow project.
+Changes from upstream: the Hub tab, the timeline, talking to chats, Remote Control, the Switchboard name and icons.

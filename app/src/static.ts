@@ -13,11 +13,12 @@ const HTML_SHELL = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent Flow</title>
+  <title>Switchboard</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/index.css">
   <style>html, body { height: 100%; margin: 0; padding: 0; }</style>
 </head>
-<body class="font-sans antialiased" style="background: #0a0a1a;">
+<body class="font-sans antialiased" style="background: #07080a;">
   <div id="root" style="height: 100%;"></div>
   <script src="/index.js"></script>
 </body>

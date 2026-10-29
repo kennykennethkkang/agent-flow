@@ -202,3 +202,188 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+/* Switchboard's colors: the Raycast dark set (docs/design/raycast-DESIGN.md), and a light set
+   when VS Code's theme is light or, outside VS Code, when the system is. Every color the
+   orbit canvas reads is a 6-digit hex, so it can mix its own alphas. */
+:root, .hub-dark {
+  --hub-canvas: #07080a;
+  --hub-surface: #0d0d0d;
+  --hub-elev: #101111;
+  --hub-card: #121212;
+  --hub-hair: #242728;
+  --hub-hair-strong: rgba(255, 255, 255, 0.16);
+  --hub-ink: #f4f4f6;
+  --hub-body: #cdcdcd;
+  --hub-mute: #9c9c9d;
+  --hub-ash: #6a6b6c;
+  --hub-blue: #57c1ff;
+  --hub-red: #ff6161;
+  --hub-green: #59d499;
+  --hub-yellow: #ffc533;
+  /* An accent for extra roles on the chat map (jev); never a state color. */
+  --hub-violet: #a98bff;
+  --hub-blue-soft: rgba(87, 193, 255, 0.15);
+  --hub-red-soft: rgba(255, 97, 97, 0.15);
+  --hub-green-soft: rgba(89, 212, 153, 0.15);
+  --hub-yellow-soft: rgba(255, 197, 51, 0.15);
+  --hub-primary: #ffffff;
+  --hub-on-primary: #000000;
+  --hub-sans: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --hub-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --hub-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+body.vscode-light, body.vscode-high-contrast-light {
+  --hub-canvas: #f5f5f7;
+  --hub-surface: #ffffff;
+  --hub-elev: #f0f0f2;
+  --hub-card: #ffffff;
+  --hub-hair: #dfe0e3;
+  --hub-hair-strong: rgba(0, 0, 0, 0.18);
+  --hub-ink: #121314;
+  --hub-body: #3b3c3f;
+  --hub-mute: #5c5d61;
+  --hub-ash: #737479;
+  --hub-blue: #0a6fbd;
+  --hub-red: #cc2e39;
+  --hub-green: #0d7f50;
+  --hub-yellow: #946000;
+  --hub-violet: #6a4cd0;
+  --hub-blue-soft: rgba(10, 111, 189, 0.11);
+  --hub-red-soft: rgba(204, 46, 57, 0.11);
+  --hub-green-soft: rgba(13, 127, 80, 0.11);
+  --hub-yellow-soft: rgba(148, 96, 0, 0.11);
+  --hub-primary: #121314;
+  --hub-on-primary: #ffffff;
+}
+@media (prefers-color-scheme: light) {
+  body:not([class*='vscode-']) {
+    --hub-canvas: #f5f5f7;
+    --hub-surface: #ffffff;
+    --hub-elev: #f0f0f2;
+    --hub-card: #ffffff;
+    --hub-hair: #dfe0e3;
+    --hub-hair-strong: rgba(0, 0, 0, 0.18);
+    --hub-ink: #121314;
+    --hub-body: #3b3c3f;
+    --hub-mute: #5c5d61;
+    --hub-ash: #737479;
+    --hub-blue: #0a6fbd;
+    --hub-red: #cc2e39;
+    --hub-green: #0d7f50;
+    --hub-yellow: #946000;
+    --hub-violet: #6a4cd0;
+    --hub-blue-soft: rgba(10, 111, 189, 0.11);
+    --hub-red-soft: rgba(204, 46, 57, 0.11);
+    --hub-green-soft: rgba(13, 127, 80, 0.11);
+    --hub-yellow-soft: rgba(148, 96, 0, 0.11);
+    --hub-primary: #121314;
+    --hub-on-primary: #ffffff;
+  }
+}
+
+/* Switchboard's parts that need states or widths, which inline styles cannot carry.
+   Motion: ease-out, under 300 ms, press to 97%, hover only with a fine pointer. */
+.hub { font-family: var(--hub-sans); font-feature-settings: 'calt', 'kern', 'liga', 'ss03'; }
+.hub-btn {
+  font: 500 13px/1 var(--hub-sans); letter-spacing: 0.2px; border-radius: 8px; padding: 9px 14px; cursor: pointer;
+  border: 1px solid var(--hub-hair); background: var(--hub-elev); color: var(--hub-ink);
+  transition: transform 160ms var(--hub-ease-out), background-color 160ms ease, border-color 160ms ease;
+}
+.hub-btn.primary { background: var(--hub-primary); color: var(--hub-on-primary); border-color: var(--hub-primary); }
+.hub-card {
+  width: 100%; text-align: left; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 12px; border-radius: 10px; cursor: pointer;
+  background: transparent; border: 1px solid transparent; color: inherit; font: inherit;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms var(--hub-ease-out);
+}
+.hub-card[aria-pressed='true'] { background: var(--hub-card); border-color: var(--hub-hair-strong); }
+.hub-switch {
+  display: inline-flex; align-items: center; gap: 8px; background: none; border: 0; color: var(--hub-body);
+  font: 500 13px/1 var(--hub-sans); cursor: pointer; padding: 6px 2px; transition: transform 160ms var(--hub-ease-out);
+}
+.hub-switch > span { flex: none; width: 30px; height: 18px; border-radius: 99px; background: var(--hub-hair); position: relative; transition: background-color 160ms ease; }
+.hub-switch > span::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--hub-ink); transition: transform 180ms var(--hub-ease-out);
+}
+.hub-switch[aria-checked='true'] > span { background: var(--hub-blue); }
+.hub-switch[aria-checked='true'] > span::after { transform: translateX(12px); background: #ffffff; }
+.hub-btn:active, .hub-card:active, .hub-switch:active { transform: scale(0.97); }
+.hub-seg > button { min-height: 30px; }
+.hub-seg > button:focus-visible { outline: 2px solid var(--hub-blue); outline-offset: -2px; }
+.hub-btn:focus-visible, .hub-card:focus-visible, .hub-switch:focus-visible, .hub input:focus-visible, .hub textarea:focus-visible, .hub select:focus-visible {
+  outline: 2px solid var(--hub-blue); outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .hub-btn:hover { border-color: var(--hub-hair-strong); }
+  .hub-card:hover { background: var(--hub-elev); }
+  .hub-card[aria-pressed='true']:hover { background: var(--hub-card); }
+}
+@media (pointer: coarse) { .hub-btn, .hub-switch, .hub-seg > button, .hub select, .hub-search { min-height: 44px; } .hub-btn { min-width: 44px; } }
+.hub-chip { display: inline-flex; align-items: center; gap: 6px; font: 500 11px/1 var(--hub-mono); padding: 4px 8px; border-radius: 99px; white-space: nowrap; }
+.hub-chip > i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+/* A chat's place in its chain (v2, v3): quieter than the state chip. */
+.hub-chip.ver { color: var(--hub-mute); box-shadow: inset 0 0 0 1px var(--hub-hair); padding: 3px 6px; }
+/* Quiet text actions and the History fold. */
+.hub-link {
+  background: none; border: 0; cursor: pointer; color: var(--hub-mute); font: 500 12px/1 var(--hub-sans);
+  padding: 6px 8px; border-radius: 6px; transition: background-color 160ms ease, color 160ms ease;
+}
+.hub-link:focus-visible { outline: 2px solid var(--hub-blue); outline-offset: 0; }
+.hub-fold > b { display: inline-block; font-weight: 400; transition: transform 160ms var(--hub-ease-out); }
+.hub-fold[aria-expanded='true'] > b { transform: rotate(90deg); }
+@media (hover: hover) and (pointer: fine) { .hub-link:hover { color: var(--hub-ink); background: var(--hub-elev); } }
+@media (pointer: coarse) { .hub-link { min-height: 44px; } }
+
+.hub-app { display: grid; grid-template-columns: 300px minmax(0, 1fr); }
+.hub-rail { border-right: 1px solid var(--hub-hair); }
+@media (max-width: 760px) {
+  .hub-app { grid-template-columns: minmax(0, 1fr); }
+  .hub-rail { border-right: 0; border-bottom: 1px solid var(--hub-hair); }
+}
+.hub-below { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; }
+@media (max-width: 720px) { .hub-below { grid-template-columns: minmax(0, 1fr); } }
+
+/* Switching chats: the old picture blurs out in 120 ms, the new one comes in over 200 ms. */
+.hub-stage { aspect-ratio: 16 / 9; }
+@media (max-width: 560px) { .hub-stage { aspect-ratio: 4 / 3; } }
+.hub-stage canvas { transition: opacity 200ms var(--hub-ease-out), filter 200ms var(--hub-ease-out); }
+.hub-stage.swap canvas { opacity: 0; filter: blur(2px); transition-duration: 120ms; }
+
+.hub-tick { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--hub-hair-strong); display: inline-grid; place-items: center; flex: none; }
+[data-s='completed'] > .hub-tick { background: var(--hub-green); border-color: var(--hub-green); }
+[data-s='completed'] > .hub-tick::after {
+  content: ''; width: 7px; height: 4px; border: solid var(--hub-canvas); border-width: 0 0 2px 2px; transform: translateY(-1px) rotate(-45deg);
+}
+[data-s='in_progress'] > .hub-tick { border-color: var(--hub-blue); box-shadow: inset 0 0 0 3px var(--hub-elev); background: var(--hub-blue); }
+.hub-bar > div { transition: transform 300ms var(--hub-ease-out); transform-origin: left; }
+
+.hub-feed > li { transition: opacity 180ms var(--hub-ease-out), transform 180ms var(--hub-ease-out); }
+@starting-style { .hub-feed > li { opacity: 0; transform: translateY(6px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-stage canvas, .hub-feed > li, .hub-bar > div, .hub-switch > span::after, .hub-card, .hub-btn, .hub-switch, .hub-link, .hub-fold > b {
+    transition-property: opacity, background-color, border-color;
+  }
+  .hub-stage.swap canvas { filter: none; }
+  .hub-btn:active, .hub-card:active, .hub-switch:active { transform: none; }
+}
+
+/* v0.16: the Changes panel's inline diff, History search, and the Cmd+K switcher. */
+.hub-diff { border-top: 1px solid var(--hub-hair); font: 400 12px/1.55 var(--hub-mono); overflow-x: auto; max-height: 360px; overflow-y: auto; }
+.hub-diff > div { padding: 0 10px; white-space: pre; color: var(--hub-body); }
+.hub-diff > .a { background: var(--hub-green-soft); }
+.hub-diff > .r { background: var(--hub-red-soft); }
+.hub-diff > .h { color: var(--hub-ash); }
+.hub mark { background: none; color: var(--hub-blue); font-weight: 600; }
+.hub-search { font: 400 12px/1 var(--hub-mono); padding: 6px 8px; border-radius: 6px; border: 1px solid var(--hub-hair); background: var(--hub-surface); color: var(--hub-ink); min-width: 0; width: 100%; box-sizing: border-box; }
+.hub-scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, var(--hub-canvas) 55%, transparent); display: grid; justify-items: center; align-items: start; padding: 12vh 16px 16px; }
+.hub-palette { width: min(480px, 100%); background: var(--hub-card); border: 1px solid var(--hub-hair-strong); border-radius: 10px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35); overflow: hidden; }
+.hub-palette > input { width: 100%; box-sizing: border-box; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--hub-hair); background: transparent; color: var(--hub-ink); font: 400 14px/1.4 var(--hub-mono); }
+.hub-palette > input:focus-visible { outline: none; }
+.hub-palette > ul { list-style: none; margin: 0; padding: 4px 0; max-height: 50vh; overflow-y: auto; }
+.hub-palette li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 14px; cursor: pointer; color: var(--hub-body); }
+.hub-palette li[aria-selected='true'] { background: var(--hub-blue-soft); color: var(--hub-ink); }
+.hub-palette > p { margin: 0; padding: 8px 14px; border-top: 1px solid var(--hub-hair); font: 400 12px/1 var(--hub-mono); color: var(--hub-ash); }
+@starting-style { .hub-palette { opacity: 0; transform: translateY(-4px) scale(0.99); } }
+.hub-palette { transition: opacity 160ms var(--hub-ease-out), transform 160ms var(--hub-ease-out); }
+@media (prefers-reduced-motion: reduce) { .hub-palette { transition-property: opacity; } }

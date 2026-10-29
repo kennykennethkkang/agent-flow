@@ -1,5 +1,5 @@
-import { AgentVisualizer } from "@/components/agent-visualizer"
+import { Switchboard } from "@/components/switchboard/switchboard"
 
 export default function Page() {
-  return <AgentVisualizer />
+  return <Switchboard />
 }

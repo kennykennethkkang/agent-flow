@@ -1,167 +1,98 @@
-# Agent Flow
+<!-- Switchboard: a VS Code hub to start, watch and talk to Claude Code and Codex chats, built on Agent Flow's live agent visualization. -->
+# Switchboard
 
-Real-time visualization of Claude Code and Codex agent orchestration. Watch your agents think, branch, and coordinate as they work. [Demo video here](https://www.youtube.com/watch?v=Ud6eDrFN-TA). 
+Switchboard is a VS Code hub for running and watching Claude Code and Codex chats across all your code projects. You start chats from one place, give each a role (lead, researcher, engineer and so on) so work can be delegated, and see what every chat is doing without switching windows.
 
-![Agent Flow visualization](https://res.cloudinary.com/dxlvclh9c/image/upload/v1773924941/screenshot_e7yox3.png)
+## Credit
 
-## Why Agent Flow?
+Switchboard is based on [Agent Flow](https://github.com/patoles/agent-flow) by Simon Patole, used under the Apache License 2.0. Agent Flow is a trademark of Simon Patole. Switchboard is not affiliated with or endorsed by the Agent Flow project. See [NOTICE](NOTICE) and [TRADEMARK.md](TRADEMARK.md).
 
-I built Agent Flow while developing [Antics](https://antics.gg), a game creation platform driven by AI agents. Debugging agent behavior was painful, so we made it visual. Now we're sharing it.
+## What it does
 
-Claude Code is powerful, but its execution is a black box — you see the final result, not the journey. Agent Flow makes the invisible visible:
+- **Always one click away.** An Activity Bar icon opens a sidebar view labeled Switchboard, with an Open in editor button. There is also a status bar button, and `Cmd+Option+A` opens it from anywhere, including a focused terminal.
+- **New chat and roles.** Pick a project, pick a role (lead, researcher, engineer, qa, designer, ops, growth), and start a Claude Code or Codex chat. Both runtimes are supported.
+- **Live chat map.** Every running chat shows as a bubble with its role and its tool calls as they happen.
+- **Today card.** What ran today, at a glance.
+- **Changes panel.** Files a chat changed, with inline diffs and an Open in VS Code diff button. Symlinks and paths outside the project are never shown.
+- **Quick switcher.** `Cmd+K` jumps to any chat.
+- **Full chats continue.** When a chat fills up, work continues in a new chat named "<name> v2", then "v3". The old one closes when idle and moves to History.
+- **History.** Chains of versions, search over handoff notes, and resume.
+- **Remote Control.** Servers per repo, and at startup.
+- **Settings gear** in the app, and a link to the browser version.
 
-- **Understand agent behavior** — See how Claude breaks down problems, which tools it reaches for, and how subagents coordinate
-- **Debug tool call chains** — When something goes wrong, trace the exact sequence of decisions and tool calls that led there
-- **See where time is spent** — Identify slow tool calls, unnecessary branching, or redundant work at a glance
-- **Learn by watching** — Build intuition for how to write better prompts by observing how Claude interprets and executes them
+## Coming next
 
-## Features
+In progress, not shipped yet:
 
-- **Live agent visualization**: Watch agent execution as an interactive node graph with real-time tool calls, branching, and return flows
-- **Claude Code + Codex**: Auto-detects sessions from both runtimes concurrently and shows them side-by-side, or restrict to one via the `agentVisualizer.runtime` setting
-- **Claude Code hooks**: Lightweight HTTP hook server receives events directly from Claude Code for zero-latency streaming
-- **Codex rollout tailing**: Reads `~/.codex/sessions/**/rollout-*.jsonl` (respects `CODEX_HOME`) and surfaces tool calls, reasoning, and authoritative token counts from Codex's own event stream
-- **Multi-session support**: Track multiple concurrent agent sessions with tabs
-- **Interactive canvas**: Pan, zoom, click agents and tool calls to inspect details
-- **Timeline & transcript panels**: Review the full execution timeline, file attention heatmap, and message transcript
-- **JSONL log file support**: Point at any JSONL event log to replay or watch agent activity
+- Sign-ins per project: AWS profiles with a default, rename, add, and a per-window override.
+- Jev bubbles.
 
-## Getting Started
-
-### Quick Start (no VS Code required)
-
-```bash
-npx agent-flow-app
-```
-
-This starts the visualizer in your browser. Start a Claude Code session in another terminal — events will stream in real-time.
-
-Options:
-- `--port <number>` — change the server port (default: 3001)
-- `--no-open` — don't open the browser automatically
-- `--verbose` — show detailed event logs
-
-### Standalone Web App (from source)
+## Run it locally
 
 ```bash
-git clone https://github.com/patoles/agent-flow.git
-cd agent-flow
-pnpm i
-pnpm run setup      # configure Claude Code hooks (one-time)
-pnpm run dev        # start the web app + event relay
+pnpm install
+pnpm dev
 ```
 
-Open http://localhost:3000 and start a Claude Code session in another terminal — events will stream to the browser in real-time.
+`pnpm dev` runs the event relay on port 3001 and the web app on port 3010. http://localhost:3010 shows sample data only, for working on the page. Switchboard never uses port 3000.
 
-### VS Code Extension
+The browser version with your real chats is the standalone app. VS Code's browser link finds it on any port:
 
-1. Install the extension
-2. Open the Command Palette (`Cmd+Shift+P`) and run **Agent Flow: Open Agent Flow**
-3. Start a Claude Code or Codex session in your workspace — Agent Flow will auto-detect it
+```bash
+pnpm build:app
+node app/dist/app.js
+```
 
-Agent Flow automatically configures Claude Code hooks the first time you open the panel. To manually reconfigure, run **Agent Flow: Configure Claude Code Hooks** from the Command Palette.
+Build and install the extension:
 
-### Runtime selection
+```bash
+cd extension
+pnpm run build:all && npx @vscode/vsce package --no-dependencies && code --install-extension switchboard-<version>.vsix --force
+```
 
-By default Agent Flow watches both Claude Code (`~/.claude/projects/`) and Codex (`~/.codex/sessions/`) concurrently in all three entry points (VS Code extension, `pnpm run dev`, `npx agent-flow-app`). Sessions are shown side-by-side and tagged by runtime. If you only use one, the other is a harmless no-op — no visible effect, no user action needed.
+Then run **Developer: Reload Window** in VS Code.
 
-To restrict to one runtime:
+Requirements: Node 20+, pnpm, VS Code 1.85+ (or a compatible editor), and the Claude Code CLI and/or Codex CLI.
 
-- **VS Code extension:** set `agentVisualizer.runtime` to `"auto"` / `"claude"` / `"codex"` in your settings
-- **`pnpm run dev` and `npx agent-flow-app`:** set the `AGENT_FLOW_RUNTIME` environment variable to `claude` or `codex` (defaults to watching both)
+## Moving to another computer
 
-For non-default Codex installs, set the `CODEX_HOME` environment variable.
+The [claude-mods](../claude-mods) repo carries a kit that sets up plugins, skills, rules, role agents, settings and the Switchboard VSIX on a new machine. Clone it next to this repo and run `node kit/setup.mjs`. Its README has a five step list. Keys and sign-ins never travel.
 
-### JSONL Event Log
+## What changed from Agent Flow
 
-You can also point Agent Flow at a JSONL event log file:
+- The Hub and Switchboard UI replaced the canvas visualizer.
+- Roles for delegating work between chats.
+- Versions and History for chats that fill up.
+- Remote Control.
+- A settings gear in the app.
+- The web app runs on port 3010.
 
-1. Set `agentVisualizer.eventLogPath` in your VS Code settings to the path of a `.jsonl` file
-2. Agent Flow will tail the file and visualize events as they arrive
+## Commands and settings
 
-## Commands
+| Command | What it does |
+|---------|--------------|
+| `Switchboard: Open` | Open Switchboard |
+| `Switchboard: Open to the Side` | Open in a side editor column |
+| `Switchboard: Connect to Running Agent` | Connect to a running session by hand |
+| `Switchboard: Configure Claude Code Hooks` | Set up hooks for live streaming |
 
-| Command | Description |
-|---------|-------------|
-| `Agent Flow: Open Agent Flow` | Open the visualizer panel |
-| `Agent Flow: Open Agent Flow to Side` | Open in a side editor column |
-| `Agent Flow: Connect to Running Agent` | Manually connect to an agent session |
-| `Agent Flow: Configure Claude Code Hooks` | Set up Claude Code hooks for live streaming |
-
-## Keyboard Shortcut
-
-| Shortcut | Action |
-|----------|--------|
-| `Cmd+Alt+A` (Mac) / `Ctrl+Alt+A` (Win/Linux) | Open Agent Flow |
-
-## Settings
+Setting ids keep the upstream `agentVisualizer.` prefix:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `agentVisualizer.runtime` | `"auto"` | Which agent runtime(s) to watch: `"auto"` (both), `"claude"`, or `"codex"` |
+| `agentVisualizer.runtime` | `"auto"` | `"auto"` (both), `"claude"` or `"codex"` |
 | `agentVisualizer.devServerPort` | `0` | Development server port (0 = production mode) |
-| `agentVisualizer.eventLogPath` | `""` | Path to a JSONL event log file to watch |
-| `agentVisualizer.autoOpen` | `false` | Auto-open when an agent session starts |
+| `agentVisualizer.eventLogPath` | `""` | JSONL event log file to watch |
+| `agentVisualizer.autoOpen` | `false` | Open when an agent session starts |
 
-## Requirements
+For a non-default Codex install, set `CODEX_HOME`.
 
-- [Node.js](https://nodejs.org/) 20+ (LTS recommended)
-- [pnpm](https://pnpm.io/)
-- Claude Code CLI
-- For the VS Code extension: a VSCode-compatible IDE 1.85+ (e.g. [VS Code](https://code.visualstudio.com/), [Cursor](https://cursor.sh/), [Windsurf](https://windsurf.com/))
+## About Agent Flow
 
-## Development
-
-```bash
-pnpm i              # install dependencies for all packages
-pnpm run setup      # configure Claude Code hooks (one-time)
-pnpm run dev        # start dev server + event relay
-```
-
-`pnpm run dev` starts both the Next.js dev server and an event relay that receives Claude Code events and streams them to the browser via SSE.
-
-Other scripts:
-
-| Script | Description |
-|--------|-------------|
-| `pnpm run dev:demo` | Start with demo/mock data |
-| `pnpm run dev:relay` | Run the event relay server standalone |
-| `pnpm run dev:extension` | Watch-build the extension |
-| `pnpm run build:all` | Production build (webview + extension) |
-| `pnpm run build:web` | Build the Next.js web app |
-| `pnpm run build:extension` | Build the extension |
-| `pnpm run build:webview` | Build the webview assets |
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/chart?repos=patoles/agent-flow&type=date&legend=bottom-right)](https://www.star-history.com/?repos=patoles%2Fagent-flow&type=date&legend=bottom-right)
-
-
-## Author
-
-Created by [Simon Patole](https://github.com/patoles), for [Antics](https://antics.gg).
-
-## Privacy & Telemetry
-
-Agent Flow ships **opt-out** anonymous usage telemetry, enabled by default only
-in the published `npx agent-flow-app` binary. `pnpm run dev` and the VS Code
-extension emit nothing. Only aggregate events are sent — session count,
-duration, event count, OS/arch, Agent Flow version, distinct model IDs
-observed, which runtimes were watched, and error class names. Prompts, file
-paths, tool calls, user info, and environment variables are never sent.
-
-- **Turn off:** `export AGENT_FLOW_TELEMETRY=false` or `export DO_NOT_TRACK=1`
-  (disabled installs write zero state to disk — no `~/.agent-flow/` directory)
-- **Inspect the payload:** `cat ~/.agent-flow/telemetry/events.jsonl`
-- **Full schema + exact fields:** see the v0.8.1 entry in
-  [extension/CHANGELOG.md](extension/CHANGELOG.md) or the `serialize()` function
-  in [scripts/telemetry.ts](scripts/telemetry.ts)
-- **Reset your anonymous identity:** delete `~/.agent-flow/installation-id` —
-  a fresh random UUIDv4 will be generated on next run
-
+Agent Flow is real-time visualization of Claude Code and Codex agent orchestration, created by [Simon Patole](https://github.com/patoles) for [Antics](https://antics.gg). Its hook server and Codex rollout reader are still the base of Switchboard's live data. The upstream project is at https://github.com/patoles/agent-flow.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE) for details.
+Apache 2.0. See [LICENSE](LICENSE).
 
-The name "Agent Flow" and associated logos are trademarks of Simon Patole. See [TRADEMARK.md](TRADEMARK.md) for usage guidelines.
+The name "Agent Flow" and its logos are trademarks of Simon Patole. See [TRADEMARK.md](TRADEMARK.md).

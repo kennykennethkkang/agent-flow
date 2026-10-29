@@ -5,9 +5,9 @@
  * port and PID. The hook forwarding script reads these at invocation time
  * to find live instances — no port numbers in settings.json, no races.
  *
- * Discovery dir: ~/.claude/agent-flow/
+ * Discovery dir: ~/.claude/switchboard/
  * Discovery file: {workspace-hash}-{pid}.json
- * Hook script:   ~/.claude/agent-flow/hook.js
+ * Hook script:   ~/.claude/switchboard/hook.js
  */
 
 import * as fs from 'fs'
@@ -17,15 +17,17 @@ import * as crypto from 'crypto'
 import { execSync } from 'child_process'
 import { HOOK_TIMEOUT_S, HOOK_SAFETY_MARGIN_MS, HOOK_FORWARD_TIMEOUT_MS, WORKSPACE_HASH_LENGTH } from './constants'
 import { createLogger } from './logger'
+import { hub } from './hub/hub-service'
 
 const log = createLogger('Discovery')
 
-const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'agent-flow')
+// Its own folder, so Agent Flow's uninstall (which deletes ~/.claude/agent-flow) never touches it.
+const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'switchboard')
 const HOOK_SCRIPT_PATH = path.join(DISCOVERY_DIR, 'hook.js')
 const WORKSPACES_MANIFEST_PATH = path.join(DISCOVERY_DIR, 'workspaces.json')
 
 /** Identifier substring used to detect our command hooks in settings.json */
-export const HOOK_COMMAND_MARKER = 'agent-flow/hook.js'
+export const HOOK_COMMAND_MARKER = 'switchboard/hook.js'
 
 /** Resolve the absolute path to the `node` binary.
  *  VS Code's extension host runs in Electron, so process.execPath is not node.
@@ -73,11 +75,14 @@ export function writeDiscoveryFile(port: number, workspace: string): void {
   ensureDir()
   const hash = hashWorkspace(workspace)
   const filePath = path.join(DISCOVERY_DIR, `${hash}-${process.pid}.json`)
+  // hubToken lets this machine's usage mods post to the Hub; owner-only, like a key.
   fs.writeFileSync(filePath, JSON.stringify({
     port,
     pid: process.pid,
     workspace: normalizePath(workspace),
-  }, null, 2) + '\n')
+    hubToken: hub.token,
+  }, null, 2) + '\n', { mode: 0o600 })
+  try { fs.chmodSync(filePath, 0o600) } catch { /* Windows keeps its own ACLs */ }
   log.info(`Wrote ${filePath}`)
 }
 
@@ -141,17 +146,19 @@ function ensureDir(): void {
   }
 }
 
-function getHookScriptContent(): string {
+/** The forwarder script's text; exported for the test that runs it. */
+export function getHookScriptContent(): string {
   return `#!/usr/bin/env node
-// Agent Flow hook forwarder v3 — installed by the Agent Flow VS Code extension.
+// Agent Flow hook forwarder v4, installed by the Agent Flow VS Code extension.
 // Claude Code invokes this as a command hook. It reads a discovery directory to
 // find live extension instances, checks their PIDs, and forwards the event via
 // HTTP POST. Dead instances are cleaned up automatically.
 //
 // v3: containment-based workspace matching (supports subdirectory CWD),
 //     realpathSync normalization (handles symlinks), Windows-safe PID checks.
+// v4: a cwd no window contains goes to the live window with the lowest pid.
 //
-// Discovery dir: ~/.claude/agent-flow/
+// Discovery dir: ~/.claude/switchboard/
 // Discovery file: {workspace-hash}-{pid}.json  →  { port, pid, workspace }
 'use strict';
 const fs = require('fs');
@@ -164,7 +171,7 @@ const os = require('os');
 // (stdin stall, HTTP hang, unexpected blocking) from blocking Claude Code.
 setTimeout(() => process.exit(0), ${HOOK_TIMEOUT_S * 1000 - HOOK_SAFETY_MARGIN_MS});
 
-const DIR = path.join(os.homedir(), '.claude', 'agent-flow');
+const DIR = path.join(os.homedir(), '.claude', 'switchboard');
 const IS_WIN = process.platform === 'win32';
 
 /** Normalize a path: resolve and follow symlinks where possible */
@@ -220,7 +227,14 @@ process.stdin.on('end', () => {
     }
   }
 
-  if (!matches.length) process.exit(0);
+  // A chat in a folder no window has open goes to the live window with the lowest pid, so Switchboard
+  // still sees it and the target stays put when another window opens mid-chat.
+  if (!matches.length) {
+    const live = allFiles.map(f => { try { return JSON.parse(fs.readFileSync(path.join(DIR, f), 'utf8')) } catch { return null } })
+      .filter(d => d && d.port && d.pid && isAlive(d.pid)).sort((a, b) => a.pid - b.pid)
+    if (!live.length) process.exit(0);
+    matches.push({ d: live[0], file: '', wsLen: 0 });
+  }
 
   // Sort by workspace path length descending — most specific match first
   matches.sort((a, b) => b.wsLen - a.wsLen);

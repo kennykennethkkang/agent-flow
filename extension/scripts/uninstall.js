@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * vscode:uninstall script — runs when the extension is uninstalled.
- * Removes Agent Flow hooks from ALL known Claude Code settings files,
- * then deletes the entire ~/.claude/agent-flow/ directory.
+ * Removes Switchboard hooks from ALL known Claude Code settings files,
+ * then deletes the entire ~/.claude/switchboard/ directory.
  *
  * Sources for workspace discovery (checked in order, deduplicated):
  * 1. workspaces.json manifest — persists across crashes/restarts
@@ -13,11 +13,11 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const HOOK_COMMAND_MARKER = 'agent-flow/hook.js';
+const HOOK_COMMAND_MARKER = 'switchboard/hook.js';
 // Legacy Agent Flow HTTP hooks used the bare hook server origin. Other tools'
 // loopback hooks (with a path) must be left alone. Mirrors src/hook-entries.ts.
 const LEGACY_HOOK_URL_RE = /^http:\/\/127\.0\.0\.1:\d+\/?$/;
-const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'agent-flow');
+const DISCOVERY_DIR = path.join(os.homedir(), '.claude', 'switchboard');
 const MANIFEST_PATH = path.join(DISCOVERY_DIR, 'workspaces.json');
 
 // ─── Remove hooks from a settings file ─────────────────────────────────────
