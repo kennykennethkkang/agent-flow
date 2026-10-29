@@ -5,9 +5,12 @@
  */
 import * as vscode from 'vscode'
 import { execFile } from 'child_process'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import { hub } from './hub-service'
 import { focusChat } from './actions'
-import { canPrefill, notifyStep, plainText } from './progress'
+import { canPrefill, doneText, notifyStep, plainText, todayText } from './progress'
 import type { ChatProgress, ChatState } from './types'
 
 const titleOf = (p: ChatProgress) => hub.get().chats.find(c => c.sessionId === p.sessionId)?.name ?? p.cwd.split(/[\\/]/).pop() ?? 'A chat'
@@ -43,10 +46,27 @@ export function notify(change: { from?: ChatState; to: ChatProgress }): void {
   const title = titleOf(p)
   if (p.state === 'done') {
     if (p.commit) prefill(p.cwd, p.commit)
-    mac(title, 'Done')
-    void vscode.window.showInformationMessage(`Switchboard: ${title} is done.`, 'Show').then(c => c && focusChat(p.sessionId))
+    const what = doneText(p)
+    mac(title, what)
+    void vscode.window.showInformationMessage(`Switchboard: ${title}: ${what.replace(/[.!?]$/, '')}.`, 'Show').then(c => c && focusChat(p.sessionId))
   } else if (p.state === 'needs-you') {
     mac(title, p.question ?? 'Needs you')
-    void vscode.window.showWarningMessage(`Switchboard: ${title} asks: ${p.question ?? 'needs you'}`, 'Answer').then(c => c && focusChat(p.sessionId))
+    void vscode.window.showWarningMessage(`Switchboard: ${title}${p.limited ? ':' : ' asks:'} ${p.question ?? 'needs you'}`, p.limited ? 'Show' : 'Answer').then(c => c && focusChat(p.sessionId))
   }
+}
+
+// ponytail: fixed 6 pm; one file stamps the day so only the first window to look sends it.
+const SUMMARY_HOUR = 18
+const SENT = path.join(os.homedir(), '.claude', 'switchboard', 'today-sent')
+/** Once a day after SUMMARY_HOUR: one notification for every chat that finished, is almost done, or needs Kenneth. */
+export function dailySummary(now = Date.now()): void {
+  const d = new Date(now)
+  if (d.getHours() < SUMMARY_HOUR) return
+  const day = d.toDateString()
+  try { if (fs.readFileSync(SENT, 'utf8') === day) return } catch { /* never sent */ }
+  try { fs.writeFileSync(SENT, day) } catch { return }
+  const text = todayText(hub.get().progress, titleOf, now)
+  if (!text) return
+  mac('Switchboard today', text)
+  void vscode.window.showInformationMessage(`Switchboard today: ${text}.`)
 }

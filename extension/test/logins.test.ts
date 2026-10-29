@@ -4,10 +4,10 @@ import assert from 'node:assert/strict'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { AUTH0, applyLogin, loginUrl, readLogins, writeLogins } from '../src/hub/logins'
-import { deleteAwsProfile, parseAwsConfig, removeProfile } from '../src/hub/aws'
+import { AUTH0, accountsNote, applyLink, applyLogin, loginFor, loginUrl, readLinks, readLogins, writeLogins } from '../src/hub/logins'
+import { addAwsProfile, deleteAwsProfile, isStale, parseAwsConfig, removeProfile } from '../src/hub/aws'
 import { commandProblem } from '../src/hub/routes'
-import type { WebApp } from '../src/hub/types'
+import type { Links, WebApp } from '../src/hub/types'
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'sb-logins-'))
 let n = 0
@@ -102,6 +102,16 @@ describe('deleting an AWS profile', () => {
     for (const name of ['default', 'live', 'base', 'nope']) assert.ok('problem' in removeProfile(CONFIG, name), name)
   })
 
+  it('deletes backups and duplicates that match the default; only the last named copy stays', () => {
+    const same = 'region = us-west-1\nlogin_session = s\n'
+    const text = `[default]\n${same}\n[profile live]\n${same}\n[profile yo]\n${same}\n[profile previous-default-20261029-073925]\n${same}`
+    let r = removeProfile(text, 'previous-default-20261029-073925')
+    assert.ok('text' in r)
+    r = removeProfile(r.text, 'yo')
+    assert.ok('text' in r)
+    assert.ok('problem' in removeProfile(r.text, 'live'), 'live is now the only named copy of the default')
+  })
+
   it('writes a timestamped backup next to the config before changing it', () => {
     const dir = tmp(), file = path.join(dir, 'config')
     fs.writeFileSync(file, CONFIG, { mode: 0o600 })
@@ -138,5 +148,96 @@ describe('sign-in command shapes', () => {
     assert.ok(commandProblem({ type: 'hub-login-delete', app: 'auth0' }))
     assert.ok(commandProblem({ type: 'hub-login-add', app: 'auth0', label: 'x', url: 1 }))
     assert.ok(commandProblem({ type: 'hub-aws-delete' }))
+  })
+})
+
+describe('project links', () => {
+  const APPS: WebApp[] = [
+    { ...AUTH0, logins: [{ id: 'k', label: 'kenneth@x', url: 'https://manage.auth0.com/', chrome: 'Profile 4' }, { id: 'w', label: 'work', url: 'https://manage.auth0.com/' }], active: 'w' },
+    { id: 'vercel', name: 'Vercel', url: 'https://vercel.com/login', logins: [{ id: 't', label: 'team login', url: 'https://vercel.com/login?next=/team', chrome: 'Default' }], active: 't' },
+  ]
+  const P = '/Users/k/Documents/GitHub/app'
+  const link = (links: Links, app: string, login: string | null, folder = P) => applyLink(APPS, links, { type: 'hub-login-link', folder, app, login }, [P])
+
+  it('connects with the default, sets a project default, and turns off', () => {
+    let links = link({}, 'auth0', null) as Links
+    assert.deepEqual(links, { [P]: { auth0: null } })
+    links = link(links, 'auth0', 'k') as Links
+    links = link(links, 'vercel', null) as Links
+    assert.deepEqual(links, { [P]: { auth0: 'k', vercel: null } })
+    links = link(links, 'auth0', 'off') as Links
+    assert.deepEqual(links, { [P]: { vercel: null } })
+    assert.deepEqual(link(links, 'vercel', 'off'), {})
+  })
+
+  it('refuses unknown folders, apps and logins', () => {
+    assert.match(link({}, 'auth0', null, '/etc') as string, /project/)
+    assert.match(link({}, 'nope', null) as string, /app/)
+    assert.match(link({}, 'auth0', 't') as string, /login/)
+  })
+
+  it('persists next to the apps and cleans up when a login or app goes', () => {
+    const file = path.join(tmp(), 'logins.json')
+    writeLogins(APPS, file, { [P]: { auth0: 'k', vercel: 't' }, '/x': { gone: null } })
+    assert.deepEqual(readLinks(file), { [P]: { auth0: 'k', vercel: 't' } })
+    // Deleted login falls back to the app default, deleted app drops its key.
+    let apps = applyLogin(APPS, { type: 'hub-login-delete', app: 'auth0', id: 'k' }) as WebApp[]
+    writeLogins(apps, file)
+    assert.deepEqual(readLinks(file), { [P]: { auth0: null, vercel: 't' } })
+    apps = applyLogin(apps, { type: 'hub-login-app-delete', app: 'vercel' }) as WebApp[]
+    writeLogins(apps, file)
+    assert.deepEqual(readLinks(file), { [P]: { auth0: null } })
+    assert.deepEqual(readLogins(file), apps)
+  })
+
+  it('open without an id picks the project default, else the app default', () => {
+    const links: Links = { [P]: { auth0: 'k', vercel: null } }
+    assert.equal(loginFor(APPS[0], links, P), 'k')
+    assert.equal(loginFor(APPS[1], links, P), 't')
+    assert.equal(loginFor(APPS[0], links, '/other'), 'w')
+    assert.equal(loginFor(APPS[0], links, undefined), 'w')
+  })
+
+  it('names the linked accounts for a new chat, labels and Chrome profiles only', () => {
+    const chrome = [{ dir: 'Profile 4', name: 'Kenneth' }, { dir: 'Default', name: 'Person 1' }]
+    const note = accountsNote(APPS, { [P]: { auth0: 'k', vercel: null } }, P, chrome)
+    assert.equal(note, 'Web accounts for this project: Auth0 uses kenneth@x (Chrome Kenneth); Vercel uses team login (Chrome Person 1).')
+    assert.ok(!note?.includes('http'))
+    assert.equal(accountsNote(APPS, { [P]: { auth0: 'w' } }, P, []), 'Web accounts for this project: Auth0 uses work (system browser).')
+    assert.equal(accountsNote(APPS, {}, P, chrome), undefined)
+  })
+})
+
+describe('save order', () => {
+  it('refuses a login command with an unknown Chrome profile before anything is saved', () => {
+    const apps: WebApp[] = [{ ...AUTH0, logins: [{ id: 'a', label: 'x', url: 'https://manage.auth0.com/' }] }]
+    assert.match(applyLogin(apps, { type: 'hub-login-open', app: 'auth0', id: 'a', chrome: 'Profile 9' }, id, ['Default']) as string, /Chrome/)
+    assert.match(applyLogin(apps, { type: 'hub-login-add', app: 'auth0', label: 'y', url: 'https://manage.auth0.com/', chrome: 'Profile 9' }, id, ['Default']) as string, /Chrome/)
+    assert.ok(Array.isArray(applyLogin(apps, { type: 'hub-login-open', app: 'auth0', id: 'a', chrome: '' }, id, ['Default'])))
+    assert.ok(Array.isArray(applyLogin(apps, { type: 'hub-login-open', app: 'auth0', id: 'a', chrome: 'Default' }, id, ['Default'])))
+  })
+
+  it('adds an AWS profile only after the Chrome profile checks out', () => {
+    const file = path.join(tmp(), 'config')
+    fs.writeFileSync(file, '[default]\nregion = us-west-1\n')
+    assert.match(addAwsProfile('dev', 'us-west-2', 'Profile 9', ['Default'], file) ?? '', /Chrome/)
+    assert.equal(fs.readFileSync(file, 'utf8'), '[default]\nregion = us-west-1\n')
+    assert.equal(addAwsProfile('dev', 'us-west-2', 'Default', ['Default'], file), undefined)
+    assert.deepEqual(parseAwsConfig(fs.readFileSync(file, 'utf8')).map(s => s.name), ['default', 'dev'])
+    assert.ok(addAwsProfile('dev', 'us-west-2', '', ['Default'], file), 'name taken')
+  })
+
+  it('marks backups of an old default as stale', () => {
+    assert.equal(isStale('previous-default-20261028-150405'), true)
+    assert.equal(isStale('previous'), false)
+    assert.equal(isStale('dev'), false)
+  })
+
+  it('takes the link command and open with a folder and no id', () => {
+    assert.equal(commandProblem({ type: 'hub-login-link', folder: '/p', app: 'auth0', login: null }), undefined)
+    assert.equal(commandProblem({ type: 'hub-login-link', folder: '/p', app: 'auth0', login: 'off' }), undefined)
+    assert.equal(commandProblem({ type: 'hub-login-link', folder: '/p', app: 'auth0', login: 'k' }), undefined)
+    assert.ok(commandProblem({ type: 'hub-login-link', folder: '/p', app: 'auth0' }))
+    assert.equal(commandProblem({ type: 'hub-login-open', app: 'auth0', folder: '/p' }), undefined)
   })
 })

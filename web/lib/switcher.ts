@@ -4,9 +4,10 @@
  */
 import type { ArchivedChat, ChatProgress, ChatRow, ChatState } from './hub-types'
 import { archiveChains, splitVersion } from './archive'
+import { almostDone } from '../components/switchboard/look'
 
 export type SwitchItem =
-  | { kind: 'live'; id: string; name: string; version: number; state: ChatState }
+  | { kind: 'live'; id: string; name: string; version: number; state: ChatState; almost?: boolean }
   | { kind: 'history'; id: string; chain: string; name: string; version: number }
 
 /** The indices of q's letters in name: a substring if there is one, else letters in order; null when none fit. */
@@ -25,7 +26,7 @@ export function matchName(name: string, q: string): number[] | null {
 export function switcherItems(cards: { chat: ChatRow; progress?: ChatProgress }[], archive: ArchivedChat[]): SwitchItem[] {
   const live: SwitchItem[] = cards.map(({ chat, progress }) => {
     const { origin, version } = splitVersion(chat.name)
-    return { kind: 'live', id: chat.sessionId, name: origin || chat.cwd.split(/[\\/]/).pop() || chat.sessionId.slice(0, 8), version, state: progress?.state ?? 'idle' }
+    return { kind: 'live', id: chat.sessionId, name: origin || chat.cwd.split(/[\\/]/).pop() || chat.sessionId.slice(0, 8), version, state: progress?.state ?? 'idle', ...(almostDone(progress) ? { almost: true } : {}) }
   })
   const history: SwitchItem[] = archiveChains(archive).flatMap(c => c.versions.map(v => ({ kind: 'history' as const, id: v.sessionId, chain: `${c.latest.cwd}\n${c.origin}`, name: c.origin, version: v.version })))
   return [...live, ...history]

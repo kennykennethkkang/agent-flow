@@ -61,8 +61,8 @@ export class HookServer implements vscode.Disposable {
 
   readonly onEvent = this._onEvent.event
 
-  private readonly _onRaw = new vscode.EventEmitter<Record<string, unknown>>()
-  /** Every hook payload as Claude Code sent it, for the hub's chat progress. */
+  private readonly _onRaw = new vscode.EventEmitter<{ payload: Record<string, unknown>; mirror: boolean }>()
+  /** Every hook payload as Claude Code sent it, for the hub's chat progress. A mirror is a chat another window owns. */
   readonly onRaw = this._onRaw.event
 
   constructor(port?: number) {
@@ -97,7 +97,7 @@ export class HookServer implements vscode.Disposable {
                     || typeof (parsed as HookPayload).hook_event_name !== 'string') {
                   log.warn('Invalid hook payload: missing session_id or hook_event_name')
                 } else {
-                  this.handleHook(parsed as HookPayload)
+                  this.handleHook(parsed as HookPayload, req.headers['x-switchboard-mirror'] === '1')
                 }
               } catch (e) {
                 log.error('Failed to parse payload:', e)
@@ -176,8 +176,10 @@ export class HookServer implements vscode.Disposable {
     return (Date.now() - startTime) / 1000
   }
 
-  private handleHook(payload: HookPayload): void {
-    this._onRaw.fire(payload as unknown as Record<string, unknown>)
+  private handleHook(payload: HookPayload, mirror = false): void {
+    this._onRaw.fire({ payload: payload as unknown as Record<string, unknown>, mirror })
+    // A mirror feeds only the hub's progress; the owning window draws and notifies.
+    if (mirror) return
     const eventName = payload.hook_event_name
     log.debug(eventName, payload.tool_name || payload.agent_type || '')
 

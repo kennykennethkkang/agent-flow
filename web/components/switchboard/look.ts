@@ -1,12 +1,19 @@
-import type { ChatState } from '@/lib/hub-types'
+import type { ChatProgress, ChatState } from '@/lib/hub-types'
 
+type Key = 'blue' | 'green' | 'red' | 'yellow' | 'teal'
 /** key: the --hub-* color the orbit canvas reads for this state. */
-export const STATE: Record<ChatState, { label: string; color: string; soft: string; key: 'blue' | 'green' | 'red' | 'yellow' }> = {
+export const STATE: Record<ChatState, { label: string; color: string; soft: string; key: Key }> = {
   working: { label: 'Working', color: 'var(--hub-blue)', soft: 'var(--hub-blue-soft)', key: 'blue' },
-  done: { label: 'Done', color: 'var(--hub-green)', soft: 'var(--hub-green-soft)', key: 'green' },
+  done: { label: 'Finished', color: 'var(--hub-green)', soft: 'var(--hub-green-soft)', key: 'green' },
   'needs-you': { label: 'Needs you', color: 'var(--hub-red)', soft: 'var(--hub-red-soft)', key: 'red' },
   idle: { label: 'Idle', color: 'var(--hub-yellow)', soft: 'var(--hub-yellow-soft)', key: 'yellow' },
 }
+/** Jev's verdict on Kenneth's request i: covered, missed (MISSED in progress.ts), or unknown. */
+export const coverage = (p: ChatProgress, i: number) => { const s = p.covered?.[i]; return s == null ? undefined : s <= 0.2 ? 'missed' : s >= 0.8 ? 'covered' : undefined }
+export const missedCount = (p?: ChatProgress) => (p?.asked ?? []).filter((_, i) => coverage(p!, i) === 'missed').length
+/** Done, but the standup still lists Left items or a request went uncovered: teal, not the full green. */
+export const almostDone = (p?: ChatProgress) => p?.state === 'done' && (!!p.report?.left.length || missedCount(p) > 0)
+export const ALMOST = { label: 'Almost done', color: 'var(--hub-teal)', soft: 'var(--hub-teal-soft)', key: 'teal' as Key }
 /** The roles in plan order; the ring follows it. */
 export const ORDER = ['researcher', 'engineer', 'qa', 'designer', 'ops', 'growth']
 export const repoOf = (cwd: string) => cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd

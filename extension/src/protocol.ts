@@ -1,4 +1,4 @@
-import type { AiId, ChatProfile, HubState, SettingKey, SwitchboardKey } from './hub/types'
+import type { AiId, ChatProfile, GitOp, HubState, SettingKey, SwitchboardKey } from './hub/types'
 /**
  * Message protocol between VS Code extension host and webview.
  *
@@ -70,6 +70,7 @@ export type WebviewToExtensionMessage =
   | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string }
   | { type: 'hub-refresh' }
   | { type: 'hub-send'; sessionId: string; text: string }
+  | { type: 'hub-answer'; sessionId: string; askId: string; choice: number[] }
   | { type: 'hub-rc'; on: boolean; sessionId?: string }
   | { type: 'hub-open-url'; url: string }
   | { type: 'hub-web'; phone: boolean }
@@ -98,7 +99,10 @@ export type WebviewToExtensionMessage =
   | { type: 'hub-aws-delete'; profile: string }
   | { type: 'hub-login-app-add'; name: string; url: string }
   | { type: 'hub-login-add'; app: string; label: string; url: string; chrome?: string }
-  | { type: 'hub-login-open'; app: string; id: string; chrome?: string }
+  | { type: 'hub-login-open'; app: string; id?: string; chrome?: string; folder?: string }
+  /** login: a login id, null for the app's default, 'off' to drop the app from the project. */
+  | { type: 'hub-login-link'; folder: string; app: string; login: string | null }
+  | { type: 'hub-browser'; folder: string; chrome: string | null }
   | { type: 'hub-login-active'; app: string; id: string }
   | { type: 'hub-login-rename'; app: string; id: string; label: string }
   | { type: 'hub-login-delete'; app: string; id: string }
@@ -111,9 +115,11 @@ export type WebviewToExtensionMessage =
   | { type: 'hub-dev-start'; folder: string }
   | { type: 'hub-dev-stop'; folder: string }
   | { type: 'hub-awake'; on: boolean }
+  | { type: 'hub-device'; id: string; allow: boolean }
   | { type: 'hub-changes'; sessionId: string }
   | { type: 'hub-open-diff'; sessionId: string; file: string }
   | { type: 'hub-search'; q: string }
+  | { type: 'hub-git'; sessionId: string; op: GitOp; files?: string[]; summary?: string; description?: string; branch?: string; stash?: boolean; confirmed?: boolean }
 
 // ─── Transcript Types (from Claude Code JSONL files) ─────────────────────────
 

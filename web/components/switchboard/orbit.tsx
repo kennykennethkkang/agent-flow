@@ -9,7 +9,7 @@
  */
 import { useEffect, useRef } from 'react'
 import type { ChatProgress, ChatState, SessionLive } from '@/lib/hub-types'
-import { ORDER, STATE } from './look'
+import { ALMOST, ORDER, STATE, almostDone } from './look'
 import { PILL_MS, SAT_ROW, TAU as TW, approach, groupRoles, orbitMoves, satSlot } from '@/lib/orbit-motion'
 import { vscodeBridge } from '@/lib/vscode-bridge'
 
@@ -30,7 +30,7 @@ export function ringRoles(p?: ChatProgress): RoleOn[] {
 export function describe(c: OrbitChat): string {
   const roles = ringRoles(c.progress).filter(r => r.state !== 'unused')
     .map(r => `${r.role}${c.models?.[r.role] ? ` (${c.models[r.role]})` : ''} ${r.state}${r.running.length > 1 ? `, ${r.running.length} running` : ''}`)
-  return `${c.name}: ${STATE[c.state].label}. You, the lead${roles.length ? `, and ${roles.join('; ')}` : ', no roles yet'}.`
+  return `${c.name}: ${(almostDone(c.progress) ? ALMOST : STATE[c.state]).label}. You, the lead${roles.length ? `, and ${roles.join('; ')}` : ', no roles yet'}.`
 }
 
 /**
@@ -45,7 +45,7 @@ type Scene = {
 }
 export const newScene = (): Scene => ({ v: new Map(), seen: new Set(), moving: false, glide: false, snap: true, dt: 0, spin: 0, ring: new Map(), sats: new Map(), badge: new Map() })
 
-const KEYS = ['canvas', 'card', 'elev', 'hair', 'ink', 'body', 'mute', 'ash', 'blue', 'red', 'green', 'yellow', 'violet'] as const
+const KEYS = ['canvas', 'card', 'elev', 'hair', 'ink', 'body', 'mute', 'ash', 'blue', 'red', 'green', 'yellow', 'violet', 'teal'] as const
 type Pal = Record<(typeof KEYS)[number], string> & { sans: string; mono: string }
 const TAU = Math.PI * 2
 const out = (u: number) => 1 - Math.pow(1 - u, 3)
@@ -192,7 +192,7 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
     tick(x, y, 8, light ? '#ffffff' : C.canvas, 1.75)
   }
 
-  const legend: Array<[string, string]> = [['working', C.blue], ...(showTools ? [['tool call', C.yellow] as [string, string]] : []), ['done', C.green], ['needs you', C.red]]
+  const legend: Array<[string, string]> = [['working', C.blue], ...(showTools ? [['tool call', C.yellow] as [string, string]] : []), ['done', C.green], ...(almostDone(c.progress) ? [['almost done', C.teal] as [string, string]] : []), ['needs you', C.red]]
   // The legend: one row, or more on a narrow stage (a key that would run past the edge starts a new row below);
   // each extra row lifts the picture above it by its height.
   ctx.font = `400 11px ${C.mono}`
@@ -206,6 +206,7 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
   const lift = (rows.length - 1) * 16
   const m = Math.min(w, h - lift), live = c.state === 'working', finished = c.state === 'done', needs = c.state === 'needs-you'
   const dim = tw('dim', c.state === 'idle' ? 0.45 : 1, TW.color)
+  const fin = almostDone(c.progress) ? C.teal : C.green
   const wWork = tw('work', live ? 1 : 0, TW.color), wNeed = tw('need', needs ? 1 : 0, TW.color), wFin = tw('fin', finished ? 1 : 0, TW.color)
   const dots = gridPattern(ctx, d, C.hair)
   if (dots) { ctx.fillStyle = dots; ctx.fillRect(0, 0, w, h) }
@@ -253,7 +254,7 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
     seed += 0.37
     if (!still && p.wA > 0.01) for (let k = 0; k < 2; k++) spark(lead, p, (t * 0.42 + k / 2 + seed) % 1, C.blue, 0.1, 2.5, p.wA * p.on)
   }
-  edge(lead, done, twc('de', finished ? C.green : C.ash), lerp(0.3 * dim, 0.7, wFin), finished ? [] : [3, 5], -0.06)
+  edge(lead, done, twc('de', finished ? fin : C.ash), lerp(0.3 * dim, 0.7, wFin), finished ? [] : [3, 5], -0.06)
 
   // Tool calls: the newest few, out from whoever made them. A role not on the ring draws from the lead.
   if (showTools) {
@@ -361,7 +362,7 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
     })
   }
 
-  const lc = twc('lead', C[STATE[c.state].key])
+  const lc = twc('lead', C[(almostDone(c.progress) ? ALMOST : STATE[c.state]).key])
   pulse(cx, cy, lr, C.blue, 0.3, wWork)
   pulse(cx, cy, lr, C.red, 0.6, wNeed)
   bubble(cx, cy, lr, lc, { wash: 0.18, glow: 18 * Math.min(1, wWork + wNeed + wFin), dim })
@@ -373,7 +374,7 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
   }
   text('Lead', cx, cy - lr * 0.16, { size: Math.max(12, lr * 0.25), weight: 600, alpha: dim })
   // The line under Lead crossfades when it changes.
-  const sub = live ? (active.length ? `${active.length > 1 ? `${active.length} roles` : active[0]} working` : 'planning') : needs ? 'waiting on you' : finished ? 'finished' : `idle ${c.ago}`
+  const sub = live ? (active.length ? `${active.length > 1 ? `${active.length} roles` : active[0]} working` : 'planning') : needs ? 'waiting on you' : finished ? (almostDone(c.progress) ? 'almost done' : 'finished') : `idle ${c.ago}`
   if (S.snap || !S.sub) S.sub = { text: sub, at: -1e9 }
   else if (S.sub.text !== sub) S.sub = { text: sub, prev: S.sub.text, at: now }
   const fade = Math.min(1, (now - S.sub.at) / 180)
@@ -385,8 +386,8 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
   const qOn = tw('q', qText ? 1 : 0, TW.enter, 0)
   if (qOn > 0.01 && qShown) pop(cx, cy - lr - 30, 1, qOn, () => pill(cx, cy - lr - 30 - (1 - qOn) * 6, qShown, C.red, 1, { size: 12, mono: false, fg: C.ink }))
 
-  pill(done.x, done.y, 'Done', twc('dc', finished ? C.green : C.ash), lerp(dim, 1, wFin), { size: 12, mono: false, fg: twc('df', finished ? C.green : C.mute), check: wFin })
-  if (wFin > 0.01) text(c.progress?.commit ? 'commit message ready' : 'no commit message', done.x, done.y + 24, { size: 10, color: C.green, mono: true, weight: 400, alpha: wFin })
+  pill(done.x, done.y, 'Done', twc('dc', finished ? fin : C.ash), lerp(dim, 1, wFin), { size: 12, mono: false, fg: twc('df', finished ? fin : C.mute), check: wFin })
+  if (wFin > 0.01) text(c.progress?.commit ? 'commit message ready' : 'no commit message', done.x, done.y + 24, { size: 10, color: fin, mono: true, weight: 400, alpha: wFin })
 
   rows.forEach((row, i) => {
     const ly = h - 18 - (rows.length - 1 - i) * 16

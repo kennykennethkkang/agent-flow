@@ -8,6 +8,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import * as os from 'node:os'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 import { HubService } from '../src/hub/hub-service'
 import { commandProblem, handleHub as route, type HubReply } from '../src/hub/routes'
 import { board, suggest } from '../src/hub/brain'
@@ -207,9 +209,11 @@ describe('hub state and command routes', () => {
     assert.equal(ok.status, 200)
     assert.deepEqual(JSON.parse(ok.body).chats, [])
     // The phone secret stays in the VS Code panel, never in the browser's state.
-    h.set({ phoneUrl: 'http://192.168.1.5:3131/?k=secret' })
+    h.set({ phoneUrls: { wifi: 'http://192.168.1.5:3131/?k=secret' }, thisWindow: '/g/agent-flow' })
     const again = handleHub(h, 'GET', `/hub/state?token=${h.token}`, '') as { body: string }
-    assert.equal(JSON.parse(again.body).phoneUrl, null)
+    assert.equal(JSON.parse(again.body).phoneUrls, null)
+    // The browser app is no window, so it gets no "this window" tag.
+    assert.equal(JSON.parse(again.body).thisWindow, undefined)
     assert.doesNotMatch(again.body, /secret/)
     // A read marks the hub as watched, so its chats keep refreshing with no panel open.
     assert.ok(h.stateReadAt > 0)
@@ -488,6 +492,51 @@ describe('handoff waits for running subagents', () => {
     assert.deepEqual(got, [['engineer e1']])
   })
 
+  it('passes it on once the lead stops its last subagent with TaskStop', () => {
+    const h = new HubService()
+    const got: string[] = []
+    h.onHandoff(x => got.push(x.sessionId))
+    hook(h, 'SubagentStart', { agent_type: 'engineer', agent_id: 'e1' }, 1)
+    h.ingest({ token: h.token, kind: 'handoff', sessionId: 'old', cwd: '/u/Armasu', note }, 2)
+    hook(h, 'PostToolUse', { tool_name: 'TaskStop', tool_input: { task_id: 'e1' }, tool_response: { task_id: 'e1' } }, 3)
+    assert.deepEqual(got, ['old'])
+  })
+
+  it('stops waiting when the chat is about to compact, naming what still runs', () => {
+    const h = new HubService()
+    const got: Array<string[] | undefined> = []
+    h.onHandoff(x => got.push(x.running))
+    hook(h, 'SubagentStart', { agent_type: 'engineer', agent_id: 'e1' }, 1)
+    h.ingest({ token: h.token, kind: 'handoff', sessionId: 'old', cwd: '/u/Armasu', note }, 2)
+    h.ingest({ token: h.token, kind: 'live', sessionId: 'old', cwd: '/u/Armasu', tokens: 900, compactAt: 1000, limits: [] }, 3)
+    assert.deepEqual(got, [])
+    h.ingest({ token: h.token, kind: 'live', sessionId: 'old', cwd: '/u/Armasu', tokens: 970, compactAt: 1000, limits: [] }, 4)
+    assert.deepEqual(got, [['engineer e1']])
+  })
+
+  it('goes at once when Kenneth asks for the handoff, before or after the note arrives', () => {
+    const h = new HubService()
+    const got: string[] = []
+    h.onHandoff(x => got.push(x.sessionId))
+    hook(h, 'SubagentStart', { agent_type: 'engineer', agent_id: 'e1' }, 1)
+    h.ingest({ token: h.token, kind: 'handoff', sessionId: 'old', cwd: '/u/Armasu', note }, 2)
+    h.handoffNow('old', 3)
+    assert.deepEqual(got, ['old'])
+    h.handoffNow('new', 4)
+    h.hook({ session_id: 'new', cwd: '/u/Armasu', hook_event_name: 'SubagentStart', agent_type: 'qa', agent_id: 'q1' }, 5)
+    h.ingest({ token: h.token, kind: 'handoff', sessionId: 'new', cwd: '/u/Armasu', note }, 6)
+    assert.deepEqual(got, ['old', 'new'])
+  })
+
+  it('goes at once when the mod says Kenneth asked for it in another window', () => {
+    const h = new HubService()
+    const got: string[] = []
+    h.onHandoff(x => got.push(x.sessionId))
+    hook(h, 'SubagentStart', { agent_type: 'engineer', agent_id: 'e1' }, 1)
+    h.ingest({ token: h.token, kind: 'handoff', sessionId: 'old', cwd: '/u/Armasu', note, force: true }, 2)
+    assert.deepEqual(got, ['old'])
+  })
+
   it('does not close the old chat while a subagent of it still runs', () => {
     const h = new HubService()
     hook(h, 'SessionStart', {}, 1)
@@ -507,5 +556,108 @@ describe('hub token', () => {
     const hub = new HubService()
     assert.equal(hub.isToken('é'.repeat(hub.token.length)), false)
     assert.equal(hub.isToken(hub.token), true)
+  })
+})
+
+describe('device route', () => {
+  const ask = { id: 'ab'.repeat(16), ip: '192.168.1.50', ua: 'iPhone Safari', network: 'Wi-Fi', port: 3131 }
+  const post = (h: HubService, body: unknown, token = h.token) => handleHub(h, 'POST', `/hub/device?token=${token}`, JSON.stringify(body))!.status
+  it('hands a well formed ask or its end to the window', () => {
+    const h = new HubService()
+    const seen: unknown[] = []
+    h.onDevice = d => { seen.push(d) }
+    assert.equal(post(h, ask), 204)
+    assert.equal(post(h, { ...ask, network: 'Tailscale' }), 204)
+    assert.equal(post(h, { id: ask.id, done: true }), 204)
+    assert.deepEqual(seen, [ask, { ...ask, network: 'Tailscale' }, { id: ask.id, done: true }])
+  })
+  it('refuses a wrong token, a bad shape or no listener', () => {
+    const h = new HubService()
+    const seen: unknown[] = []
+    h.onDevice = d => { seen.push(d) }
+    assert.equal(post(h, ask, 'nope'), 403)
+    for (const bad of [{ ...ask, id: 'short' }, { ...ask, network: 'LTE' }, { ...ask, port: '3131' }, { ...ask, port: 0 }, { ...ask, ua: 'x'.repeat(200) }, { ...ask, ip: 5 }, { id: ask.id, done: false }, null, 'x']) assert.equal(post(h, bad), 400, JSON.stringify(bad))
+    assert.equal(handleHub(h, 'POST', `/hub/device?token=${h.token}`, '{')!.status, 400)
+    assert.equal(handleHub(h, 'GET', `/hub/device?token=${h.token}`, '')!.status, 404)
+    assert.deepEqual(seen, [])
+    assert.equal(post(new HubService(), ask), 503)
+  })
+  it('keeps the asks out of the browser state', () => {
+    const h = new HubService()
+    h.set({ devices: [{ id: ask.id, ip: ask.ip, ua: ask.ua, network: 'Wi-Fi' }] })
+    const r = handleHub(h, 'GET', `/hub/state?token=${h.token}`, '') as { body: string }
+    assert.equal(JSON.parse(r.body).devices, undefined)
+  })
+})
+
+describe('usage limit retry', () => {
+  const hit = { session_id: 's1', cwd: '/r', hook_event_name: 'StopFailure', error: 'rate_limit', last_assistant_message: 'API Error: Rate limit reached' }
+  const texts = (h: HubService, now: number) => h.take('s1', now).filter(i => i.kind === 'prompt').map(i => (i as { text: string }).text)
+
+  it('queues one continue prompt a minute after the known reset', () => {
+    const h = new HubService()
+    const reset = new Date(10 * 60_000).toISOString()
+    h.ingest({ token: h.token, kind: 'live', sessionId: 's1', cwd: '/r', limits: [{ kind: 'five_hour', percentUsed: 100, resetsAt: reset }] }, 0)
+    h.hook(hit, 1000)
+    assert.deepEqual(texts(h, 10 * 60_000), [])
+    const got = texts(h, 11 * 60_000)
+    assert.equal(got.length, 1)
+    assert.match(got[0], /^Switchboard: the usage limit reset\. Continue where you left off/)
+    assert.deepEqual(texts(h, 12 * 60_000), [])
+  })
+
+  it('retries after 30 minutes with no known reset, and not for a mirror', () => {
+    const h = new HubService()
+    h.hook(hit, 0)
+    assert.deepEqual(texts(h, 29 * 60_000), [])
+    assert.equal(texts(h, 30 * 60_000).length, 1)
+    const m = new HubService()
+    m.hook(hit, 0, true)
+    assert.deepEqual(texts(m, 60 * 60_000), [])
+  })
+
+  it('is dropped when the chat moves on or ends, kept through a prompt that may fail', () => {
+    for (const next of [
+      { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: {} },
+      { hook_event_name: 'SessionEnd' },
+    ]) {
+      const h = new HubService()
+      h.hook(hit, 0)
+      h.hook({ session_id: 's1', cwd: '/r', ...next }, 1)
+      assert.deepEqual(texts(h, 60 * 60_000), [], next.hook_event_name)
+    }
+    const h = new HubService()
+    h.hook(hit, 0)
+    h.hook({ session_id: 's1', cwd: '/r', hook_event_name: 'UserPromptSubmit' }, 1)
+    assert.equal(texts(h, 60 * 60_000).length, 1)
+  })
+
+  const kept = (file: string) => { const h = new HubService(); h.keepRetries(file); return h }
+
+  it('outlives a window reload through its file, and leaves it once sent or the chat ends', () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sb-retry-')), 'retries.json')
+    const t = Date.now()
+    kept(file).hook(hit, t)
+    const back = kept(file)
+    assert.deepEqual(texts(back, t + 29 * 60_000), [])
+    assert.equal(texts(back, t + 30 * 60_000).length, 1)
+    assert.deepEqual(texts(kept(file), t + 60 * 60_000), [])
+    kept(file).hook(hit, t)
+    kept(file).hook({ session_id: 's1', cwd: '/r', hook_event_name: 'SessionEnd' }, t + 1)
+    assert.deepEqual(texts(kept(file), t + 60 * 60_000), [])
+  })
+
+  it('a reload forgets a retry a day overdue: that chat is gone', () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sb-retry-')), 'retries.json')
+    fs.writeFileSync(file, JSON.stringify({ s1: Date.now() - 25 * 3600_000, s2: 'x' }))
+    assert.deepEqual(kept(file).take('s1').filter(i => i.kind === 'prompt'), [])
+  })
+
+  it('sends none while Claude Code continues by itself (autoContinueAtUsageLimit), still warns', () => {
+    const h = new HubService()
+    h.set({ keep: { ...h.get().keep, autoContinue: true } }, 0)
+    h.hook(hit, 0)
+    assert.equal(h.get().progress[0].limited?.error, 'rate_limit')
+    assert.deepEqual(texts(h, 60 * 60_000), [])
   })
 })

@@ -1,14 +1,15 @@
 'use client'
 
 /**
- * Settings in one searchable list. Claude Code rows go through the extension's
- * whitelist into ~/.claude/settings.json, so new chats pick them up.
- * Switch and Seg came over from the old Hub's ui.tsx; the rows from its Controls cards.
+ * Settings, in sections: a nav on the left (a wrapping row on a phone) and the picked section's rows.
+ * Claude Code rows go through the extension's whitelist into ~/.claude/settings.json, so new chats pick them up.
+ * Search runs across every section; installed lists sit in folds apart from the switches.
  */
 import { useState, type ReactNode } from 'react'
 import type { HubState, SettingKey, SwitchboardKey } from '@/lib/hub-types'
 import { gearRows } from '@/lib/gear-rows'
 import type { HubCommand } from '@/lib/vscode-bridge'
+import { SignIns } from './sign-ins'
 
 export function Switch({ on, onChange, label, text }: { on: boolean; onChange: (next: boolean) => void; label: string; text?: string }) {
   return (
@@ -18,112 +19,157 @@ export function Switch({ on, onChange, label, text }: { on: boolean; onChange: (
   )
 }
 
-function Seg<T extends string>({ options, value, onChange, label }: { options: Array<[T, string]>; value: T; onChange: (v: T) => void; label: string }) {
+/** A native select in the hub's look; long option text truncates in the box. */
+export function Pick({ options, value, onChange, label, muted }: { options: Array<[string, string]>; value: string; onChange: (v: string) => void; label: string; muted?: boolean }) {
   return (
-    <span role="radiogroup" aria-label={label} className="hub-seg" style={{ display: 'inline-flex', border: '1px solid var(--hub-hair)', borderRadius: 8, overflow: 'hidden', flexWrap: 'wrap', background: 'var(--hub-canvas)' }}>
-      {options.map(([v, text]) => (
-        <button key={v} type="button" role="radio" aria-checked={v === value} tabIndex={v === value ? 0 : -1} onClick={() => onChange(v)} onKeyDown={e => {
-          // Arrow keys move and select, like native radios; only the checked option is in the tab order.
-          const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
-          if (!step) return
-          e.preventDefault()
-          const j = (options.findIndex(o => o[0] === v) + step + options.length) % options.length
-          onChange(options[j][0]); (e.currentTarget.parentElement?.children[j] as HTMLElement | undefined)?.focus()
-        }}
-          style={{ border: 0, padding: '6px 10px', cursor: 'pointer', font: '500 12px/1 var(--hub-sans)', background: v === value ? 'var(--hub-card)' : 'transparent', color: v === value ? 'var(--hub-ink)' : 'var(--hub-mute)', boxShadow: v === value ? 'inset 0 0 0 1px var(--hub-hair-strong)' : 'none', borderRadius: 7 }}>
-          {text}
-        </button>
-      ))}
-    </span>
+    <select className="hub-select" aria-label={label} value={value} onChange={e => onChange(e.target.value)} style={muted ? { color: 'var(--hub-mute)' } : undefined}>
+      {options.map(([v, text]) => <option key={v} value={v}>{text}</option>)}
+    </select>
   )
 }
 
 const MODELS: Array<[string, string]> = [['default', 'Default'], ['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']]
 const ROLE_MODELS: Array<[RoleModel, string]> = [['fable', 'Fable'], ['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku']]
 type RoleModel = Extract<HubCommand, { type: 'hub-role-model' }>['model']
-const EFFORTS: Array<[string, string]> = [['default', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra'], ['max', 'Max']]
+const EFFORTS: Array<[string, string]> = [['default', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']]
+const IDLE: Array<[string, string]> = [['5', 'After 5 min'], ['15', 'After 15 min'], ['30', 'After 30 min'], ['60', 'After 1 h'], ['never', 'Never']]
 
-const IDLE: Array<[string, string]> = [['5', '5 min'], ['15', '15 min'], ['30', '30 min'], ['60', '1 h'], ['never', 'Never']]
+const SECTIONS = ['Chats', 'Models', 'Accounts', 'Integrations', 'Installed'] as const
+type Section = typeof SECTIONS[number]
+type Row = { label: string; control: ReactNode; hint?: string; section: Section }
 
-// match: the row did its own search (the installed lists).
-type Row = { label: string; control: ReactNode; hint?: string; group: string; match?: boolean }
-const GROUPS = ['Chats', 'Switchboard', 'Claude Code', 'Role models', 'More']
-
-export function Gear({ hub, send, onSignIns }: { hub: HubState; send: (c: HubCommand) => void; onSignIns: () => void }) {
-  const [q, setQ] = useState('')
-  const c = hub.controls.claude
-  const set = (key: SettingKey, value: boolean | string | null) => send({ type: 'hub-setting', key, value })
-  const onOff = (key: SettingKey, on: boolean, label: string) => <Switch label={label} on={on} onChange={next => set(key, next)} />
-  const query = q.trim().toLowerCase()
-  const sb = hub.controls.switchboard
-  const own = (key: SwitchboardKey, value: boolean | number | null) => send({ type: 'hub-switchboard', key, value })
-  const signedIn = hub.aws.filter(a => a.status === 'signed-in').length
-  const saved = (hub.signIns?.apps ?? []).reduce((n, a) => n + a.logins.length, 0)
-  const rows: Row[] = [
-    { group: 'Chats', label: 'Hide idle chats', hint: 'A chat that stopped and stayed quiet this long leaves the list; Find still has it.',
-      control: <Seg label="Hide idle chats after" options={IDLE} value={sb.idleMinutes === null ? 'never' : String(sb.idleMinutes)} onChange={v => own('idleMinutes', v === 'never' ? null : Number(v))} /> },
-    { group: 'Chats', label: 'Continue at usage limit', hint: 'When a usage limit resets, Claude picks the chat up again by itself.',
-      control: <Switch label="Continue at usage limit" on={hub.keep.autoContinue} onChange={next => set('autoContinueAtUsageLimit', next)} /> },
-    { group: 'Chats', label: 'Fresh branch for new chats', hint: 'A chat that continues from a full one starts on its own git branch.',
-      control: <Switch label="Fresh branch for new chats" on={hub.keep.freshBranch} onChange={next => send({ type: 'hub-keep', freshBranch: next })} /> },
-    { group: 'Chats', label: 'Brief for new chats', hint: 'New chats first read what other chats in the project are doing.',
-      control: <Switch label="Brief for new chats" on={sb.brief} onChange={next => own('brief', next)} /> },
-    { group: 'Switchboard', label: 'Hooks', hint: 'Claude Code reports each chat\'s progress to Switchboard. Off removes the hooks from ~/.claude/settings.json.',
-      control: <Switch label="Hooks" on={sb.hooks} onChange={next => own('hooks', next)} /> },
-    { group: 'Switchboard', label: 'Status bar button', hint: 'The Switchboard button in VS Code\'s status bar.',
-      control: <Switch label="Status bar button" on={sb.statusBar} onChange={next => own('statusBar', next)} /> },
-    { group: 'Switchboard', label: 'Sync rules and roles', hint: `${hub.controls.rulesNote ?? 'Rules and roles: not synced yet'}. Writes the working rules to ~/.claude/CLAUDE.md and ~/.codex/AGENTS.md and the role agents to ~/.claude/agents; files you edited are kept.`,
-      control: <Switch label="Sync rules and roles" on={sb.syncRules} onChange={next => own('syncRules', next)} /> },
-    { group: 'Switchboard', label: 'Re-sync rules and roles',
-      control: <button type="button" className="hub-btn" onClick={() => send({ type: 'hub-rules-sync' })}>Re-sync now</button> },
-    { group: 'Switchboard', label: 'Sign-ins', hint: `AWS: ${hub.aws.length} profile${hub.aws.length === 1 ? '' : 's'}, ${signedIn} signed in. Web apps: ${saved} saved login${saved === 1 ? '' : 's'}, each opened in its own Chrome profile.`,
-      control: <button type="button" className="hub-btn" onClick={onSignIns}>Open sign-ins</button> },
-    { group: 'Claude Code', label: 'Lead model (main chat)', hint: 'Applies to the main chat, and to roles set to Inherit lead.',
-      control: <Seg label="Lead model" options={MODELS} value={c.model ?? 'default'} onChange={v => set('model', v === 'default' ? null : v)} /> },
-    { group: 'Claude Code', label: 'Lead effort', hint: 'Applies to the main chat, and to roles set to Inherit lead.',
-      control: <Seg label="Lead effort" options={EFFORTS} value={c.effortLevel ?? 'default'} onChange={v => set('effortLevel', v === 'default' ? null : v)} /> },
-    ...hub.installed.filter(i => i.kind === 'role').map(r => {
-      const value = r.model ?? 'inherit'
-      const options: Array<[string, string]> = [['inherit', `Inherit lead (${c.model ?? 'default'})`], ...ROLE_MODELS]
-      // A full model id in the file shows as its own option, so the row still has a checked one.
-      if (!options.some(o => o[0] === value)) options.push([value, value])
-      return { group: 'Role models', label: r.name, hint: `model: in ~/.claude/agents/${r.name}.md`,
-        control: <Seg label={`${r.name} model`} options={options} value={value} onChange={v => { if (v !== value) send({ type: 'hub-role-model', role: r.name, model: v as RoleModel }) }} /> }
-    }),
-    { group: 'Claude Code', label: 'Remote Control at startup', control: <Switch label="Remote Control at startup" on={hub.rc.atStartup} onChange={on => send({ type: 'hub-rc', on })} /> },
-    { group: 'Claude Code', label: 'Push notifications to your phone', control: onOff('agentPushNotifEnabled', c.push, 'Push notifications') },
-    { group: 'Claude Code', label: 'Notify when a chat needs input', control: onOff('inputNeededNotifEnabled', c.needInput, 'Input needed notifications') },
-    { group: 'Claude Code', label: 'Status line', control: hub.controls.statusLineReady ? onOff('statusLine', c.statusLine, 'Status line') : <span style={{ color: 'var(--hub-ash)' }}>needs claude-mods/kit/statusline.mjs</span> },
-    ...hub.rcServers.map(r => ({ group: 'Claude Code', label: `Remote Control for all repos (${r.name})`, hint: `Chats you start from the Claude app begin in ${r.folder.replace(/^\/Users\/[^/]+/, '~')} and can work in any repo under it.`,
-      control: <Switch label={`Remote Control for all repos (${r.name})`} on={r.on} onChange={on => send({ type: 'hub-rc-server', folder: r.folder, on })} /> })),
-    { group: 'More', label: 'Export kit', control: <button type="button" className="hub-btn" onClick={() => send({ type: 'hub-kit-export' })}>Export now</button> },
-    ...gearRows(hub, query).map(r => ({ group: 'More', label: r.label, hint: r.hint, match: r.match,
-      control: <span style={{ color: 'var(--hub-mute)', fontSize: 12, lineHeight: 1.5, flex: '1 1 100%', minWidth: 0, overflowWrap: 'anywhere' }}>{r.names.join(', ') || 'none'}</span> })),
-  ]
-  const shown = rows.filter(row => row.match ?? `${row.label} ${row.hint ?? ''}`.toLowerCase().includes(query))
+function Line({ row }: { row: Row }) {
   return (
-    <section aria-label="Settings" style={{ padding: 16, borderBottom: '1px solid var(--hub-hair)', background: 'var(--hub-surface)' }}>
-      <input type="search" aria-label="Find a setting" placeholder="Find a setting" value={q} onChange={e => setQ(e.target.value)}
-        style={{ font: 'inherit', padding: '8px 12px', borderRadius: 8, width: '100%', maxWidth: 360, boxSizing: 'border-box', marginBottom: 8, background: 'var(--hub-canvas)', color: 'var(--hub-ink)', border: '1px solid var(--hub-hair)' }} />
-      {GROUPS.map(g => {
-        const list = shown.filter(row => row.group === g)
-        if (!list.length) return null
-        return (
-          <div key={g} role="group" aria-label={g} style={{ marginTop: 12 }}>
-            <h3 style={{ font: '600 13px/1.4 var(--hub-sans)', color: 'var(--hub-ink)', margin: '0 0 2px' }}>{g}</h3>
-            {list.map(row => (
-              <div key={row.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '8px 0', borderTop: '1px solid var(--hub-hair)', color: 'var(--hub-body)', flexWrap: 'wrap' }}>
-                <span style={{ display: 'grid', gap: 2, minWidth: 0, flex: '1 1 220px' }}>
-                  <span>{row.label}</span>
-                  {row.hint && <span style={{ fontSize: 12, lineHeight: 1.45, color: 'var(--hub-ash)' }}>{row.hint}</span>}
-                </span>
-                {row.control}
-              </div>
-            ))}
-          </div>
-        )
-      })}
-      {!shown.length && <p style={{ color: 'var(--hub-ash)' }}>Nothing matches.</p>}
+    <div className="hub-set-row">
+      <span style={{ display: 'grid', gap: 2, minWidth: 0 }}>
+        <span style={{ color: 'var(--hub-ink)' }}>{row.label}</span>
+        {row.hint && <span style={{ fontSize: 12, lineHeight: 1.45, color: 'var(--hub-ash)' }}>{row.hint}</span>}
+      </span>
+      {row.control}
+    </div>
+  )
+}
+
+const sub = { font: '500 11px/1 var(--hub-mono)', color: 'var(--hub-ash)', textTransform: 'uppercase', letterSpacing: 0.4, margin: '16px 0 4px' } as const
+
+export function Gear({ hub, send }: { hub: HubState; send: (c: HubCommand) => void; onSignIns?: () => void }) {
+  const [q, setQ] = useState('')
+  const [at, setAt] = useState<Section>('Chats')
+  const c = hub.controls.claude
+  const sb = hub.controls.switchboard
+  const set = (key: SettingKey, value: boolean | string | null) => send({ type: 'hub-setting', key, value })
+  const own = (key: SwitchboardKey, value: boolean | number | null) => send({ type: 'hub-switchboard', key, value })
+  const query = q.trim().toLowerCase()
+  const lead = c.model ?? 'default'
+
+  const rows: Row[] = [
+    { section: 'Chats', label: 'Hide idle chats', hint: 'A chat that stopped and stayed quiet this long leaves the list; Find still has it.',
+      control: <Pick label="Hide idle chats" options={IDLE} value={sb.idleMinutes === null ? 'never' : String(sb.idleMinutes)} onChange={v => own('idleMinutes', v === 'never' ? null : Number(v))} /> },
+    { section: 'Chats', label: 'Continue at usage limit', hint: 'When a usage limit resets, Claude picks the chat up again by itself.',
+      control: <Switch label="Continue at usage limit" on={hub.keep.autoContinue} onChange={next => set('autoContinueAtUsageLimit', next)} /> },
+    { section: 'Chats', label: 'Fresh branch for new chats', hint: 'A chat that continues from a full one starts on its own git branch.',
+      control: <Switch label="Fresh branch for new chats" on={hub.keep.freshBranch} onChange={next => send({ type: 'hub-keep', freshBranch: next })} /> },
+    { section: 'Chats', label: 'Brief for new chats', hint: 'New chats first read what other chats in the project are doing.',
+      control: <Switch label="Brief for new chats" on={sb.brief} onChange={next => own('brief', next)} /> },
+    { section: 'Chats', label: 'Push to your phone', hint: 'When a chat finishes.', control: <Switch label="Push to your phone" on={c.push} onChange={next => set('agentPushNotifEnabled', next)} /> },
+    { section: 'Chats', label: 'Notify when a chat needs input', control: <Switch label="Notify when a chat needs input" on={c.needInput} onChange={next => set('inputNeededNotifEnabled', next)} /> },
+
+    { section: 'Models', label: 'Lead model', hint: 'The main chat, and every role set to Inherit.',
+      control: <Pick label="Lead model" options={MODELS} value={lead} onChange={v => set('model', v === 'default' ? null : v)} /> },
+    { section: 'Models', label: 'Lead effort', hint: 'The main chat, and every role set to Inherit.',
+      control: <Pick label="Lead effort" options={EFFORTS} value={c.effortLevel ?? 'default'} onChange={v => set('effortLevel', v === 'default' ? null : v)} /> },
+    ...hub.installed.filter(i => i.kind === 'role').map((r): Row => {
+      const value = r.model && r.model !== 'inherit' ? r.model : 'inherit'
+      const options: Array<[string, string]> = [['inherit', `Inherit (${lead})`], ...ROLE_MODELS]
+      // A full model id in the file shows as its own option.
+      if (!options.some(o => o[0] === value)) options.push([value, value])
+      return { section: 'Models', label: r.name,
+        control: <Pick label={`${r.name} model`} options={options} value={value} muted={value === 'inherit'} onChange={v => { if (v !== value) send({ type: 'hub-role-model', role: r.name, model: v as RoleModel }) }} /> }
+    }),
+
+    { section: 'Integrations', label: 'Hooks', hint: 'Claude Code reports each chat\'s progress to Switchboard. Off removes the hooks from ~/.claude/settings.json.',
+      control: <Switch label="Hooks" on={sb.hooks} onChange={next => own('hooks', next)} /> },
+    { section: 'Integrations', label: 'Status bar button', hint: 'The Switchboard button in VS Code\'s status bar.',
+      control: <Switch label="Status bar button" on={sb.statusBar} onChange={next => own('statusBar', next)} /> },
+    { section: 'Integrations', label: 'Status line', hint: hub.controls.statusLineReady ? undefined : 'Needs claude-mods/kit/statusline.mjs.',
+      control: hub.controls.statusLineReady ? <Switch label="Status line" on={c.statusLine} onChange={next => set('statusLine', next)} /> : <span style={{ color: 'var(--hub-ash)', fontSize: 12 }}>Not set up</span> },
+    { section: 'Integrations', label: 'Sync rules and roles', hint: `${hub.controls.rulesNote ?? 'Not synced yet'}. Writes ~/.claude/CLAUDE.md, ~/.codex/AGENTS.md and ~/.claude/agents; files you edited are kept.`,
+      control: (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <button type="button" className="hub-link" onClick={() => send({ type: 'hub-rules-sync' })}>Sync now</button>
+          <Switch label="Sync rules and roles" on={sb.syncRules} onChange={next => own('syncRules', next)} />
+        </span>
+      ) },
+    { section: 'Integrations', label: 'Remote Control at startup', hint: 'Lets the Claude app reach new chats.', control: <Switch label="Remote Control at startup" on={hub.rc.atStartup} onChange={on => send({ type: 'hub-rc', on })} /> },
+    ...hub.rcServers.map((r): Row => ({ section: 'Integrations', label: `Remote Control for all repos in ${r.name}`, hint: `Chats you start from the Claude app begin in ${r.folder.replace(/^\/Users\/[^/]+/, '~')} and can work in any repo under it.`,
+      control: <Switch label={`Remote Control for all repos in ${r.name}`} on={r.on} onChange={on => send({ type: 'hub-rc-server', folder: r.folder, on })} /> })),
+  ]
+
+  const lists = gearRows(hub, query)
+  const hits = query ? rows.filter(row => `${row.label} ${row.hint ?? ''} ${row.section}`.toLowerCase().includes(query)) : []
+  const accountsHit = query && 'accounts sign-ins logins aws web apps chrome projects'.includes(query)
+  const listHits = query ? lists.filter(l => l.match) : []
+
+  const installed = (only = lists) => (
+    <div style={{ display: 'grid' }}>
+      {only.map(l => (
+        // Remounts open while searching, so every hit shows.
+        <details key={`${l.label}:${query ? 'q' : ''}`} open={query ? true : undefined} className="hub-fold-list">
+          <summary>
+            <b aria-hidden>›</b>
+            <span style={{ flex: 1, minWidth: 0, color: 'var(--hub-ink)' }}>{l.label}</span>
+            <span style={{ font: '400 12px/1 var(--hub-mono)', color: 'var(--hub-ash)' }}>{l.names.length}</span>
+          </summary>
+          {l.names.length
+            ? <ul role="list" className="hub-names">{l.names.map(n => <li key={n} title={n}>{n}</li>)}</ul>
+            : <p style={{ margin: '0 0 10px 22px', fontSize: 12, color: 'var(--hub-ash)' }}>None</p>}
+        </details>
+      ))}
+    </div>
+  )
+
+  const body = (s: Section) => {
+    if (s === 'Accounts') return <SignIns hub={hub} send={send} />
+    if (s === 'Installed') return (
+      <>
+        <Line row={{ section: 'Installed', label: 'Export kit', hint: 'Roles, skills, plugins and mods as one folder you can copy to another Mac.',
+          control: <button type="button" className="hub-btn" onClick={() => send({ type: 'hub-kit-export' })}>Export</button> }} />
+        <h4 style={sub}>Installed</h4>
+        {installed()}
+      </>
+    )
+    const mine = rows.filter(r => r.section === s)
+    if (s !== 'Models') return mine.map(r => <Line key={r.label} row={r} />)
+    return (
+      <>
+        {mine.slice(0, 2).map(r => <Line key={r.label} row={r} />)}
+        {mine.length > 2 && <h4 style={sub}>Roles</h4>}
+        {mine.slice(2).map(r => <Line key={r.label} row={r} />)}
+      </>
+    )
+  }
+
+  return (
+    <section aria-label="Settings" className="hub-settings">
+      <nav aria-label="Settings sections" className="hub-set-nav">
+        <input type="search" className="hub-search" aria-label="Find a setting" placeholder="Find a setting" value={q} onChange={e => setQ(e.target.value)} />
+        <div role="tablist" aria-orientation="vertical">
+          {SECTIONS.map(s => (
+            <button key={s} type="button" role="tab" aria-selected={!query && at === s} onClick={() => { setAt(s); setQ('') }}>{s}</button>
+          ))}
+        </div>
+      </nav>
+      <div role="tabpanel" aria-label={query ? 'Search results' : at} style={{ minWidth: 0 }}>
+        {query
+          ? <>
+              {hits.map(r => <Line key={r.label} row={{ ...r, hint: [r.section, r.hint].filter(Boolean).join('. ') }} />)}
+              {accountsHit && <Line row={{ section: 'Accounts', label: 'Accounts', hint: 'AWS profiles, web app logins, and which ones each project uses.',
+                control: <button type="button" className="hub-btn" onClick={() => { setAt('Accounts'); setQ('') }}>Open</button> }} />}
+              {listHits.length > 0 && <><h4 style={sub}>Installed</h4>{installed(listHits)}</>}
+              {!hits.length && !accountsHit && !listHits.length && <p style={{ color: 'var(--hub-ash)', margin: '8px 0' }}>Nothing matches.</p>}
+            </>
+          : body(at)}
+      </div>
     </section>
   )
 }

@@ -26,9 +26,3 @@ export async function postCommand(c: HubCommand, f: typeof fetch = fetch): Promi
     return 'could not reach the hub'
   }
 }
-
-/** Which network the phone link works on; Tailscale hands out 100.64.0.0/10. */
-export function phoneNetwork(url: string): 'Tailscale' | 'Same Wi-Fi only' {
-  const m = /^http:\/\/100\.(\d+)\./.exec(url)
-  return m && +m[1] >= 64 && +m[1] <= 127 ? 'Tailscale' : 'Same Wi-Fi only'
-}

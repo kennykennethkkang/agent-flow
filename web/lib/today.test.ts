@@ -10,10 +10,10 @@ test('sorts live chats into done today, needs you (with the question) and workin
   const h = demoHub(now)
   const cards = liveChats(h.chats, h.archive).map(chat => ({ chat, progress: h.progress.find(p => p.sessionId === chat.sessionId) }))
   const t = todayView(cards, h.history, h.live, now, h.jev)
-  assert.deepEqual(t.done, ['Hub AIs and Starred'])
+  assert.deepEqual(t.done, ['Hub AIs and Starred', 'Finished receipt'])
   assert.deepEqual(t.jev, { runs: 2, costUsd: 0.0184 })
   assert.deepEqual(t.needs, [{ name: 'Outfit picker copy', question: "Keep 'Closet' or rename it to 'Wardrobe'?" }])
-  assert.deepEqual(t.working, ['Fix login redirect v4'])
+  assert.deepEqual(t.working, ['Fix login redirect v4', 'Accurate Done state'])
   assert.equal(t.openCostUsd, 1.84)
   const today = h.history[h.history.length - 1]
   assert.equal(t.tokens, today.written + today.io)

@@ -7,6 +7,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { run } from './local'
+import { tailscaleBin } from './lan'
 import type { DevProject, Server } from './types'
 
 const DIR = path.join(os.homedir(), '.claude', 'switchboard')
@@ -91,9 +92,6 @@ export async function postWindow(w: Win, body: Record<string, unknown>): Promise
   } catch { return false }
 }
 
-// VS Code's PATH often lacks /usr/local/bin; the Mac App Store app keeps its CLI inside the bundle.
-const TS_BINS = ['/usr/local/bin/tailscale', '/opt/homebrew/bin/tailscale', '/usr/bin/tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale']
-export const tailscaleBin = () => TS_BINS.find(b => fs.existsSync(b))
 
 /** This Mac's tailnet name, whether it can serve https, and what it serves; null without tailscale or when it is down. */
 export async function tailnet(): Promise<Tailnet | null> {

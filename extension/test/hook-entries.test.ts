@@ -169,3 +169,9 @@ describe('HOOK_EVENTS', () => {
     assert.ok(HOOK_EVENTS.includes('UserPromptSubmit'))
   })
 })
+
+describe('StopFailure', () => {
+  it('is registered so a turn ended by a usage limit leaves Working', () => {
+    assert.ok((HOOK_EVENTS as readonly string[]).includes('StopFailure'))
+  })
+})

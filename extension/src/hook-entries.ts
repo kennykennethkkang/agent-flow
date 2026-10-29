@@ -36,7 +36,7 @@ export function isAgentFlowHook(entry: ClaudeHookEntry): boolean {
 /** The Claude Code events Switchboard registers for; scripts/setup.js keeps the same list. */
 export const HOOK_EVENTS = [
   'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
-  'SubagentStart', 'SubagentStop', 'Notification', 'Stop', 'SessionEnd',
+  'SubagentStart', 'SubagentStop', 'Notification', 'PermissionRequest', 'Stop', 'StopFailure', 'SessionEnd',
 ] as const
 
 export type SettingsReadResult =

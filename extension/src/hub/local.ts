@@ -7,10 +7,11 @@ import { execFile, spawn } from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import type { ChangedFile, Connection, GitState, Installed, PlanView, Server } from './types'
+import type { ChangedFile, Connection, GitState, Installed, PhoneUrls, PlanView, Server } from './types'
 import { DEFAULT_RELAY_PORT } from '../constants'
 import { modelOf } from './roles'
 import { newerVersion } from './self-update'
+import { ipv4s, lanHosts, macNames, phoneCode, type MacNames } from './lan'
 
 const HOME = os.homedir()
 const CLAUDE = path.join(HOME, '.claude')
@@ -265,17 +266,27 @@ export async function webUrl(probe = servesLive, read = announced): Promise<stri
 }
 
 const LAN_FILE = path.join(os.homedir(), '.claude', 'switchboard', 'web.lan')
+const SECRET_FILE = path.join(os.homedir(), '.claude', 'switchboard', 'phone.secret')
 const port = (u: string) => { try { return new URL(u).port } catch { return '' } }
+const readTrim = (file: string) => async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).trim() || undefined
 
-/** The app's phone link with its secret (app --lan writes it), only when it belongs to the running app. */
-export async function phoneUrl(web: string | null, read = async () => (await fs.promises.readFile(LAN_FILE, 'utf8').catch(() => '')).trim() || undefined): Promise<string | null> {
+/** A phone link per network from this Mac's current addresses and names, only when the running app was started with --lan
+ * (web.lan names its port). Empty when there is no address yet, null when the app has no phone access. */
+export async function phoneUrls(web: string | null, read = readTrim(LAN_FILE), secret = readTrim(SECRET_FILE), ips = ipv4s, names: () => MacNames = macNames): Promise<PhoneUrls | null> {
   const lan = web ? await read() : undefined
-  return lan && port(lan) === port(web!) ? lan : null
+  if (!lan || port(lan) !== port(web!)) return null
+  const k = await secret()
+  if (!k) return {}
+  const { wifi, tailscale } = lanHosts(ips())
+  const link = (host: string) => `http://${host}:${port(web!)}/?k=${k}`
+  const n = names()
+  const links = { wifi, tailscale, wifiName: n.wifi, tailscaleName: n.tailscale }
+  if (!Object.values(links).some(Boolean)) return {}
+  return { ...Object.fromEntries(Object.entries(links).flatMap(([key, host]) => (host ? [[key, link(host)]] : []))), code: phoneCode(k) }
 }
 
 // VS Code's own binary runs as plain node (ELECTRON_RUN_AS_NODE), so no node on PATH is needed.
 // Detached so the app outlives VS Code.
-// ponytail: the app reads its Wi-Fi and Tailscale addresses once at start; after a Wi-Fi change or joining Tailscale, restart the app and press Phone.
 // The app's folder is its workspace; a computer with only the vsix has no checkout, so home then.
 function spawnApp(root: string, lan: boolean, app: string): number | undefined {
   const child = spawn(process.execPath, [app, '-p', '3131', '--no-open', ...(lan ? ['--lan'] : [])], {
@@ -334,7 +345,7 @@ type WebDeps = {
   /** Where the bundled app is copied to and run from. */
   stage?: string
   stop?: (pid: number) => void
-  lan?: (web: string) => Promise<string | null>
+  lan?: (web: string) => Promise<unknown>
   listeners?: (port: string) => Promise<number[]>
   pidFile?: string
   tries?: number
@@ -350,7 +361,7 @@ type WebDeps = {
  * phone starts it with --lan, restarting an app this extension started without it. Our app running an older
  * copy than the bundle is restarted, keeping --lan, so an update reaches the browser and the phone. */
 export function ensureWeb(root: string, phone = false, deps: WebDeps = {}): Promise<{ url: string } | { problem: string }> {
-  const { find = () => webUrl(), start = spawnApp, stop = (pid: number) => process.kill(pid), lan = (w: string) => phoneUrl(w),
+  const { find = () => webUrl(), start = spawnApp, stop = (pid: number) => process.kill(pid), lan = (w: string) => phoneUrls(w),
     listeners = portListeners, pidFile = PID_FILE, tries = 25, waitMs = 200, bundle, stage = STAGE, refresh = false, version, command = (pid: number) => run('ps', ['-o', 'command=', '-p', String(pid)]) } = deps
   const wait = async (done: () => Promise<boolean>) => {
     for (let i = 0; i < tries; i++) {
@@ -429,10 +440,19 @@ async function skillName(dir: string): Promise<string> {
 const DESC_MAX = 160
 const cut = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().replace(/\s+/g, ' ').slice(0, DESC_MAX) : undefined)
 /** A SKILL.md's frontmatter description, one line. */
-async function skillDescription(dir: string): Promise<string | undefined> {
-  const text = await fs.promises.readFile(path.join(dir, 'SKILL.md'), 'utf8').catch(() => '')
+// A frontmatter description, plain or a YAML block (>- or |) of indented lines.
+function frontDescription(text: string): string | undefined {
   const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? ''
-  return cut(/^description:\s*["']?(.+?)["']?\s*$/m.exec(front)?.[1])
+  const m = /^description:[ \t]*(.*)$/m.exec(front)
+  if (!m) return undefined
+  if (!/^[>|][-+]?$/.test(m[1].trim())) return cut(m[1].trim().replace(/^["']|["']$/g, ''))
+  const rest = front.slice(m.index + m[0].length).split(/\r?\n/).slice(1)
+  const end = rest.findIndex(l => !/^\s/.test(l))
+  return cut((end < 0 ? rest : rest.slice(0, end)).join(' '))
+}
+
+async function skillDescription(dir: string): Promise<string | undefined> {
+  return frontDescription(await fs.promises.readFile(path.join(dir, 'SKILL.md'), 'utf8').catch(() => ''))
 }
 
 const paths = (v: unknown) => [v].flat().filter((d): d is string => typeof d === 'string')
@@ -504,6 +524,62 @@ export async function installed(claude = CLAUDE): Promise<Installed[]> {
   }
   for (const f of await list('jev-presets')) if (f.endsWith('.json')) out.push({ kind: 'preset', name: f.slice(0, -5), enabled: true })
   return out
+}
+
+/** A design file's frontmatter description, else its first heading. */
+async function mdTitle(file: string): Promise<string | undefined> {
+  const text = await fs.promises.readFile(file, 'utf8').catch(() => '')
+  return frontDescription(text) ?? cut(/^#+\s+(.+)$/m.exec(text)?.[1])
+}
+
+/**
+ * A project's own skills (.claude/skills, then .agents/skills, first name wins; symlinks followed) and its
+ * design references: design-md/<brand>/ (DESIGN.md, else its first .md), docs/design/*.md, DESIGN.md.
+ */
+export async function projectInventory(folder: string): Promise<Installed[]> {
+  const out: Installed[] = []
+  const ls = (rel: string) => fs.promises.readdir(path.join(folder, rel)).catch(() => [] as string[])
+  const seen = new Set<string>()
+  for (const rel of ['.claude/skills', '.agents/skills']) {
+    for (const name of (await ls(rel)).sort()) {
+      const dir = path.join(folder, rel, name)
+      if (name.startsWith('.') || seen.has(name) || !fs.existsSync(path.join(dir, 'SKILL.md'))) continue
+      seen.add(name)
+      const description = await skillDescription(dir)
+      out.push({ kind: 'skill', name, enabled: true, source: 'project', ...(description ? { description } : {}) })
+    }
+  }
+  const asset = async (name: string, rel: string) => {
+    const description = await mdTitle(path.join(folder, rel))
+    out.push({ kind: 'asset', name, enabled: true, source: 'project', path: rel, ...(description ? { description } : {}) })
+  }
+  for (const brand of (await ls('design-md')).sort()) {
+    if (brand.startsWith('.') || !fs.statSync(path.join(folder, 'design-md', brand), { throwIfNoEntry: false })?.isDirectory()) continue
+    const mds = (await ls(`design-md/${brand}`)).filter(n => n.endsWith('.md')).sort()
+    const pick = mds.includes('DESIGN.md') ? 'DESIGN.md' : mds[0]
+    if (pick) await asset(brand, `design-md/${brand}/${pick}`)
+  }
+  for (const f of (await ls('docs/design')).filter(n => n.endsWith('.md')).sort()) await asset(f.slice(0, -3), `docs/design/${f}`)
+  if (fs.existsSync(path.join(folder, 'DESIGN.md'))) await asset('DESIGN', 'DESIGN.md')
+  return out
+}
+
+const MANIFESTS = ['pyproject.toml', 'requirements.txt', 'Cargo.toml', 'go.mod', 'Package.swift', 'Gemfile']
+
+/** What the tool pick knows of a project: its folder name, the head of CLAUDE.md or AGENTS.md, its dependencies. */
+export async function projectContext(folder: string): Promise<string> {
+  const read = (f: string) => fs.promises.readFile(path.join(folder, f), 'utf8').catch(() => '')
+  const out = [`Folder: ${path.basename(folder)}`]
+  for (const f of ['CLAUDE.md', 'AGENTS.md']) {
+    const text = await read(f)
+    if (text.trim()) { out.push(`${f}:`, text.split('\n').slice(0, 40).join('\n')); break }
+  }
+  const pkg = await readJson(path.join(folder, 'package.json'))
+  const deps = [...Object.keys((pkg?.dependencies ?? {}) as object), ...Object.keys((pkg?.devDependencies ?? {}) as object)].slice(0, 30)
+  if (deps.length) out.push(`Dependencies: ${deps.join(', ')}`)
+  const other = MANIFESTS.filter(f => fs.existsSync(path.join(folder, f)))
+  if (other.length) out.push(`Manifests: ${other.join(', ')}`)
+  return out.join('\n')
 }
 
 /** -Users-k-Documents-GitHub-Armasu -> Armasu (the folder name Claude Code made from the path). */

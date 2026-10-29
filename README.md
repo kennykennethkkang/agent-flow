@@ -19,6 +19,20 @@ Switchboard is based on [Agent Flow](https://github.com/patoles/agent-flow) by S
 - **History.** Chains of versions, search over handoff notes, and resume.
 - **Remote Control.** Servers per repo, and at startup.
 - **Settings gear** in the app, and a link to the browser version.
+- **Answer terminal prompts.** Permission prompts and questions from a chat show in Switchboard and can be answered there.
+- **Phone access.** Open Switchboard on your phone over Wi-Fi or Tailscale by scanning a QR code.
+- **Bash runs without prompts.** The Switchboard hook allows Bash calls; deny rules in your settings still apply.
+- **Status from every window.** Chats in every open VS Code window show in one list.
+- **Window colors.** Each VS Code window gets its own color, on its title bar, status bar and in Switchboard. The title bar color goes in the project's `.vscode/settings.json`; turn off `switchboard.colorTitleBar` to skip it.
+
+## What's included
+
+- **Always-on plugins.** superpowers, ponytail, code-review, context7 and playwright are on in every Claude chat Switchboard starts and cannot be turned off there. Plugins flagged by a scan (auth0 and the stitch plugins) are never turned on by a pick.
+- **Picked per chat.** A new Claude chat with a goal gets its own plugins, skills and design references, picked by one quick Haiku call from the goal, each one's description, and the project: folder name, the top of its CLAUDE.md or AGENTS.md, and its dependencies. If the pick fails or is slow, the chat gets your own settings and the fallback is logged. Change the set in the chat's Tools section; it applies when the chat is resumed.
+- **Project skills.** Skills in the project's `.claude/skills` and `.agents/skills` are listed for that project's chats and can be turned off per chat like your own.
+- **Design references.** `design-md/<brand>/`, `docs/design/*.md` and a root `DESIGN.md` in the project. A pick takes up to three for UI work, and the chat is told their paths.
+- **Roles.** lead, researcher, engineer, qa, designer, ops and growth, from `extension/kit/agents`.
+- **The kit.** On start, the extension writes the working rules (`extension/kit/rules.md`) to `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, and the role agents to `~/.claude/agents`. `extension/kit/bundle.json` holds the rules version, so newer rules are never overwritten by older ones. A role file you edited is left alone, with the new copy saved beside it.
 
 ## Coming next
 

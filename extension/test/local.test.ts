@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { parseGitStatus, parseLsof, parseNetstat, parsePlan, decodeProjectDir, installed, pluginMcp } from '../src/hub/local'
+import { parseGitStatus, parseLsof, parseNetstat, parsePlan, decodeProjectDir, installed, pluginMcp, projectInventory, projectContext } from '../src/hub/local'
 
 describe('local readers', () => {
   it('reads plan tasks and their boxes', () => {
@@ -129,5 +129,52 @@ describe('installed', () => {
     const got = (await pluginMcp(claude)).map(c => [c.name, c.detail, c.kind]).sort()
     assert.deepEqual(got, [['bland', 'bland', 'mcp'], ['context7', 'context7', 'mcp'], ['fromFile', 'mix', 'mcp'], ['github', 'github', 'mcp'], ['inline', 'mix', 'mcp'], ['linked', 'file', 'mcp']])
     fs.rmSync(claude, { recursive: true, force: true })
+  })
+})
+
+describe('project skills, assets and context', () => {
+  const tree = () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'proj-'))
+    const put = (rel: string, text: string) => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text) }
+    put('.agents/skills/animate/SKILL.md', '---\nname: animate\ndescription: Build an animation\n---\n')
+    put('.agents/skills/only-agents/SKILL.md', '---\ndescription: Lives in .agents only\n---\n')
+    put('.agents/skills/no-skill-file/README.md', 'x')
+    put('.agents/skills/folded/SKILL.md', '---\nname: folded\ndescription: >-\n  Turns a page\n  into HTML\nlicense: MIT\n---\n')
+    fs.mkdirSync(path.join(root, '.claude/skills'), { recursive: true })
+    fs.symlinkSync('../../.agents/skills/animate', path.join(root, '.claude/skills/animate'))
+    put('design-md/apple/DESIGN.md', '---\nname: apple\ndescription: Photography-first gallery\n---\n# Apple\n')
+    put('design-md/stripe/README.md', '<!-- c -->\n# Stripe Look\n')
+    put('design-md/_UPSTREAM-README.md', '# not a folder')
+    put('docs/design/raycast-DESIGN.md', '<!-- note -->\n# Raycast dark\n')
+    put('DESIGN.md', '# Root look\n')
+    put('CLAUDE.md', Array.from({ length: 60 }, (_, i) => `rule ${i}`).join('\n'))
+    put('package.json', JSON.stringify({ dependencies: { next: '1', react: '1' }, devDependencies: { tailwindcss: '1' } }))
+    return root
+  }
+
+  it('lists project skills through symlinks, deduped, and design assets', async () => {
+    const root = tree()
+    const got = await projectInventory(root)
+    const skills = got.filter(i => i.kind === 'skill').map(i => [i.name, i.source, i.description])
+    assert.deepEqual(skills.sort(), [['animate', 'project', 'Build an animation'], ['folded', 'project', 'Turns a page into HTML'], ['only-agents', 'project', 'Lives in .agents only']])
+    const assets = got.filter(i => i.kind === 'asset').map(i => [i.name, i.path, i.description])
+    assert.deepEqual(assets.sort(), [
+      ['DESIGN', 'DESIGN.md', 'Root look'],
+      ['apple', 'design-md/apple/DESIGN.md', 'Photography-first gallery'],
+      ['raycast-DESIGN', 'docs/design/raycast-DESIGN.md', 'Raycast dark'],
+      ['stripe', 'design-md/stripe/README.md', 'Stripe Look'],
+    ])
+    assert.deepEqual(await projectInventory(path.join(root, 'missing')), [])
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  it('project context: folder, the first 40 lines of CLAUDE.md, dependency names', async () => {
+    const root = tree()
+    const c = await projectContext(root)
+    assert.match(c, new RegExp(`Folder: ${path.basename(root)}`))
+    assert.match(c, /rule 39/)
+    assert.doesNotMatch(c, /rule 40/)
+    assert.match(c, /next, react, tailwindcss/)
+    fs.rmSync(root, { recursive: true, force: true })
   })
 })

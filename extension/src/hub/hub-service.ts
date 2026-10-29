@@ -5,13 +5,15 @@
  * change fires onChange, which extension.ts throttles into `hub-state`.
  */
 import * as crypto from 'crypto'
+import * as fs from 'fs'
 import * as os from 'os'
 import { TypedEventEmitter } from '../typed-event-emitter'
-import { settle, step } from './progress'
+import { dropAsk, finishedJobs, LIMITS, settle, step } from './progress'
 import { chainVersion } from './projects'
 import { FLAGGED } from './tools'
 import { createLogger } from '../logger'
-import type { AiId, ChatProgress, ChatRow, ChatState, HandoffWait, HubState, InboxDraft, InboxItem, JevRun, Limit, Server, SessionLive } from './types'
+import { writeJsonAtomic } from '../hook-entries'
+import type { AiId, ChatProgress, ChatRow, ChatState, DeviceAsk, HandoffWait, HubState, InboxDraft, InboxItem, JevRun, Limit, Server, SessionLive } from './types'
 
 const log = createLogger('Hub')
 
@@ -25,9 +27,14 @@ const POLL_GONE_MS = 10_000
 const GONE_MS = 10 * 60 * 1000
 // A handoff or close waits on running subagents this long at most; a lost SubagentStop must not keep a full chat forever.
 export const WAIT_CAP_MS = 30 * 60 * 1000
+// Past this share of the compaction point a held handoff goes anyway, or the auto compaction wins.
+const COMPACT_SOON = 0.97
 const MAX_JEV = 50
 // A jev.py call this recent in a chat is the run the usage mod reports.
 const JEV_MATCH_MS = 10 * 60 * 1000
+// A limited chat is told to carry on a minute after its reset, or every half hour when none is known.
+const RETRY_MS = 30 * 60 * 1000
+const CONTINUE = 'Switchboard: the usage limit reset. Continue where you left off; if you need Kenneth, ask with AskUserQuestion.'
 
 export const emptyHub = (): HubState => ({
   live: [], history: [], sessions: [], plan: null,
@@ -40,7 +47,7 @@ export const emptyHub = (): HubState => ({
     statusLineReady: false,
   },
   chats: [], rcServers: [], ais: [], starred: [], progress: [], archive: [],
-  changes: null, search: null, webUrl: null, phoneUrl: null,
+  changes: null, search: null, webUrl: null, phoneUrls: null,
   tools: { flagged: FLAGGED, pick: null, chats: {} },
 })
 
@@ -64,6 +71,8 @@ export class HubService {
   private state: HubState = emptyHub()
   private readonly inboxes = new Map<string, InboxItem[]>()
   private readonly polled = new Map<string, number>()
+  // When each limited chat gets its continue prompt; kept in retriesFile so a window reload still sends it.
+  private readonly retries = new Map<string, number>()
   private readonly changed = new TypedEventEmitter<HubState>()
   readonly onChange = this.changed.event
   private readonly handoffs = new TypedEventEmitter<Handoff>()
@@ -75,6 +84,8 @@ export class HubService {
   private closing: { sessionId: string; at: number }[] = []
   // Handoffs held while the full chat still has subagents running.
   private waiting: { h: Handoff; since: number }[] = []
+  // Chats Kenneth handed off by hand: no waiting on subagents.
+  private readonly forced = new Set<string>()
   // When each chat last ran jev.py, from its own Bash hook.
   private readonly jevAsked = new Map<string, number>()
   private codexWaits: HandoffWait[] = []
@@ -91,8 +102,27 @@ export class HubService {
   readonly onPrompted = this.promptedChat.event
   /** handleHubMessage, set by startHub; kept as a field so routes.ts needs no vscode. A string is why it was refused. */
   runner?: (c: { type: string }) => boolean | string | Promise<boolean | string>
+  /** A device asking in (or its end, done), from the standalone app; set by startHub. */
+  onDevice?: (d: DeviceAsk & { port: number } | { id: string; done: true }) => void
   /** When the standalone app last read /hub/state; hub-panel.ts keeps chats fresh while it is recent. */
   stateReadAt = 0
+
+  private retriesFile?: string
+  /** One file per workspace, so only this window's own chats load back and no other window sends them. None: memory only. */
+  keepRetries(file: string): void {
+    this.retriesFile = file
+    try {
+      // One overdue by more than a day is for a chat that ended while no window listened.
+      for (const [id, due] of Object.entries(JSON.parse(fs.readFileSync(file, 'utf8')))) {
+        if (typeof due === 'number' && Date.now() - due < PROGRESS_STALE_MS) this.retries.set(id, due)
+      }
+    } catch { /* none yet, or broken: start empty */ }
+  }
+
+  private saveRetries(): void {
+    if (!this.retriesFile) return
+    try { writeJsonAtomic(this.retriesFile, Object.fromEntries(this.retries)) } catch (err) { log.warn('Retries not kept:', err) }
+  }
 
   get(): HubState {
     return this.state
@@ -115,19 +145,39 @@ export class HubService {
     this.emit(now)
   }
 
-  /** One raw hook payload; the change of state when there is one, for notify.ts. A new chat that is just working is not one. */
-  hook(payload: Record<string, unknown>, now = Date.now()): { from?: ChatState; to: ChatProgress } | undefined {
+  /**
+   * One raw hook payload; the change of state when there is one, for notify.ts. A new chat that is just working is not one.
+   * A mirror (a chat another window owns) only updates progress; that window notifies.
+   */
+  hook(payload: Record<string, unknown>, now = Date.now(), mirror = false): { from?: ChatState; to: ChatProgress } | undefined {
     const id = typeof payload.session_id === 'string' ? payload.session_id : undefined
     // A `claude -p` from outside a project (cwd /) or a payload with no folder is no chat.
     if (!id || typeof payload.cwd !== 'string' || !payload.cwd || payload.cwd === '/') return undefined
     const was = this.state.progress.find(p => p.sessionId === id)
     const input = payload.tool_input as Record<string, unknown> | undefined
     if (payload.hook_event_name === 'PreToolUse' && payload.tool_name === 'Bash' && String(input?.command ?? '').includes('jev.py')) this.jevAsked.set(id, now)
-    const next = step(was, payload, now)
+    const next = step(was, this.withEnded(payload, was), now)
     const rest = this.state.progress.filter(p => p.sessionId !== id)
+    // Only the owning window retries, or each window would send it.
+    if (payload.hook_event_name === 'StopFailure' && next?.limited && LIMITS.has(next.limited.error)) { if (!mirror) { this.retries.set(id, this.resetAt(now)); this.saveRetries() } }
+    else if (!next?.limited && this.retries.delete(id)) this.saveRetries()
     this.state = { ...this.state, progress: next ? [next, ...rest] : rest }
     this.emit(now)
-    return next && next.state !== (was?.state ?? 'working') ? { from: was?.state, to: next } : undefined
+    return !mirror && next && next.state !== (was?.state ?? 'working') ? { from: was?.state, to: next } : undefined
+  }
+
+  /** A minute past the latest reset of a used-up limit, else RETRY_MS from now. */
+  private resetAt(now: number): number {
+    const at = this.state.live.flatMap(s => s.limits).filter(l => l.percentUsed >= 100).map(l => Date.parse(l.resetsAt ?? '')).filter(Number.isFinite)
+    return at.length ? Math.max(...at, now) + 60_000 : now + RETRY_MS
+  }
+
+  /** On a Stop with background jobs pending, which ones the transcript says ended; no hook fires for that. */
+  private withEnded(payload: Record<string, unknown>, was: ChatProgress | undefined): Record<string, unknown> {
+    const file = payload.transcript_path
+    if (payload.hook_event_name !== 'Stop' || !was?.jobs?.length || typeof file !== 'string') return payload
+    // ponytail: reads the whole transcript, only on a Stop with jobs pending; tail it from an offset if that gets slow.
+    try { return { ...payload, bg_finished: finishedJobs(fs.readFileSync(file, 'utf8')) } } catch { return payload }
   }
 
   /** A post from a chat's usage mod; false when it lacks the token or a known kind. */
@@ -172,6 +222,8 @@ export class HubService {
         // The close is armed by closeAfterFresh once the fresh chat's terminal exists, never here.
         // Held while a subagent of the chat runs; emit passes it on once none does.
         const h: Handoff = { sessionId, cwd, note, ...(branch ? { branch } : {}), ...(task ? { task } : {}), ...(name ? { name } : {}), ...(plan ? { plan } : {}) }
+        // force: Kenneth asked for it, maybe in another window.
+        if (b.force === true) this.forced.add(sessionId)
         this.waiting = [...this.waiting.filter(w => w.h.sessionId !== sessionId), { h, since: now }]
         break
       }
@@ -239,10 +291,16 @@ export class HubService {
     }
   }
 
+  /** Drops a prompt once answered from here, so a second tap has nothing to send; the next one waiting shows. */
+  answered(sessionId: string, askId: string): void {
+    this.set({ progress: this.state.progress.map(p => (p.sessionId === sessionId ? dropAsk(p, askId) : p)) })
+  }
+
   /** Passes on held handoffs and closes whose chat has no subagent running, or that waited WAIT_CAP_MS. */
   private flush(now: number): void {
     const due = (id: string, since: number, what: string) => {
       if (!this.busy(id)) return true
+      if (what === 'Handing off' && (this.forced.has(id) || this.compactSoon(id))) return true
       if (now - since < WAIT_CAP_MS) return false
       log.warn(`${what} ${id.slice(0, 8)} after 30 minutes with ${this.busy(id)} subagent(s) still marked running`)
       return true
@@ -260,11 +318,24 @@ export class HubService {
     }), ...this.codexWaits]
     if (JSON.stringify(waits) !== JSON.stringify(this.state.waits)) this.state = { ...this.state, waits }
     for (const w of go) {
+      this.forced.delete(w.h.sessionId)
       // Past the cap: the fresh chat gets each one still running, to check its output.
       const p = this.state.progress.find(x => x.sessionId === w.h.sessionId)
       const running = p?.running?.map(id => `${p.roles.find(r => r.id === id)?.role ?? 'agent'} ${id}`)
       this.handoffs.fire(running?.length ? { ...w.h, running } : w.h)
     }
+  }
+
+  /** A handoff asked for by hand: queued to the chat, and it skips the wait on subagents. */
+  handoffNow(sessionId: string, now = Date.now()): void {
+    this.queue(sessionId, { kind: 'handoff' })
+    this.forced.add(sessionId)
+    this.emit(now)
+  }
+
+  private compactSoon(sessionId: string): boolean {
+    const s = this.state.live.find(x => x.sessionId === sessionId)
+    return !!s?.tokens && !!s.compactAt && s.tokens >= s.compactAt * COMPACT_SOON
   }
 
   /** Called once the fresh chat's terminal is open: the old chat closes when a new chat first posts from its folder. */
@@ -283,7 +354,13 @@ export class HubService {
     this.polled.set(sessionId, now)
     const list = this.inboxes.get(sessionId) ?? []
     this.inboxes.delete(sessionId)
-    return list
+    const due = this.retries.get(sessionId)
+    if (due === undefined || now < due) return list
+    this.retries.delete(sessionId)
+    this.saveRetries()
+    // Claude Code's own autoContinueAtUsageLimit sends one already; a second would run the turn twice.
+    if (this.state.keep.autoContinue) return list
+    return [...list, { kind: 'prompt', text: CONTINUE, id: crypto.randomBytes(6).toString('hex') }]
   }
 
   /** Whether the message box reaches this chat: a Codex chat through its tied terminal, a Claude chat through its polling mod. */

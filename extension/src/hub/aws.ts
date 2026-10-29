@@ -103,7 +103,7 @@ export function addProfile(text: string, name: string, region: string): string |
 
 /**
  * The config without [profile name] and the comment right above it, or why not: [default] stays, as does the
- * profile [default] copies (Make default) and any profile another one names as source_profile.
+ * last named profile [default] copies (Make default) and any profile another one names as source_profile.
  */
 export function removeProfile(text: string, name: string): { text: string } | { problem: string } {
   if (name === 'default') return { problem: 'the default profile cannot be deleted' }
@@ -113,7 +113,9 @@ export function removeProfile(text: string, name: string): { text: string } | { 
   if (!target) return { problem: `no AWS profile named ${name}` }
   const def = all.find(b => b.header === 'default')
   const vals = (b: Block) => JSON.stringify(Object.entries(valuesOf(body(lines, b))).sort())
-  if (def && body(lines, def).some(r => r.trim()) && vals(def) === vals(target)) return { problem: `${name} is the current default; make another profile the default first` }
+  // Many profiles can match [default] (backups, one login shared); only the last named copy is kept, a backup never.
+  const copies = def && body(lines, def).some(r => r.trim()) ? all.filter(b => b !== def && vals(b) === vals(def)) : []
+  if (copies.includes(target) && !isStale(name) && !copies.some(b => b !== target && !isStale(nameOf(b.header) ?? ''))) return { problem: `${name} is the current default; make another profile the default first` }
   const user = parseAwsConfig(text).find(s => s.values.source_profile === name)
   if (user) return { problem: `${user.name} signs in through ${name} (source_profile)` }
   let start = target.start
@@ -160,10 +162,11 @@ const readJson = (file: string): Record<string, unknown> => {
 const strings = (v: unknown): Record<string, string> =>
   Object.fromEntries(Object.entries(v && typeof v === 'object' ? v : {}).filter(([, x]) => typeof x === 'string')) as Record<string, string>
 
-export type AwsPrefs = { chrome: Record<string, string>; projects: Record<string, string> }
+/** chrome: per AWS profile; projects: AWS profile per folder; browsers: Chrome folder per project folder ('' system browser). */
+export type AwsPrefs = { chrome: Record<string, string>; projects: Record<string, string>; browsers: Record<string, string> }
 export const readLabels = () => strings(readJson(LABELS))
 export const writeLabels = (labels: Record<string, string>) => { fs.mkdirSync(SB, { recursive: true }); writeJsonAtomic(LABELS, labels) }
-export const readPrefs = (): AwsPrefs => { const j = readJson(PREFS); return { chrome: strings(j.chrome), projects: strings(j.projects) } }
+export const readPrefs = (): AwsPrefs => { const j = readJson(PREFS); return { chrome: strings(j.chrome), projects: strings(j.projects), browsers: strings(j.browsers) } }
 export const writePrefs = (p: AwsPrefs) => { fs.mkdirSync(SB, { recursive: true }); writeJsonAtomic(PREFS, p) }
 export const readChrome = (): ChromeProfile[] => { try { return chromeProfiles(fs.readFileSync(CHROME_STATE, 'utf8')) } catch { return [] } }
 export const readAwsConfig = () => { try { return fs.readFileSync(AWS_CONFIG, 'utf8') } catch { return '' } }
@@ -176,6 +179,20 @@ export function writeAwsConfig(text: string, file = AWS_CONFIG): void {
   fs.writeFileSync(tmp, text, { mode })
   fs.renameSync(tmp, file)
 }
+
+/** Adds [profile name] once the Chrome profile its sign-in opens in checks out ('' = system browser). Answers why not. */
+export function addAwsProfile(name: string, region: string, chrome: string | undefined, chromes: string[], file = AWS_CONFIG): string | undefined {
+  if (chrome && !chromes.includes(chrome)) return 'That Chrome profile is not in Chrome\'s list'
+  let text = ''
+  try { text = fs.readFileSync(file, 'utf8') } catch { /* no config yet */ }
+  const next = addProfile(text, name, region)
+  if (!next) return 'give a new profile name (letters, digits, . _ @ + -, up to 64) and a region like us-west-1'
+  writeAwsConfig(next, file)
+  return undefined
+}
+
+/** Backups Make default leaves behind, for the UI to fold away. */
+export const isStale = (name: string) => /^previous-default-\d/.test(name)
 
 /** Deletes [profile name] after copying the config to config.backup-<time> beside it. Answers why it could not. */
 export function deleteAwsProfile(name: string, file = AWS_CONFIG, now = Date.now()): string | undefined {
@@ -219,7 +236,7 @@ export async function awsProfiles(now = Date.now()): Promise<AwsProfile[]> {
     return {
       name: s.name, isDefault: s.isDefault, status: awsStatus(r.ok, r.stderr, s.values), checkedAt: now,
       ...(account ? { account } : {}), ...(label ? { label } : {}), ...(s.values.region ? { region: s.values.region } : {}),
-      ...(chrome[s.name] !== undefined ? { chrome: chrome[s.name] } : {}),
+      ...(chrome[s.name] !== undefined ? { chrome: chrome[s.name] } : {}), ...(isStale(s.name) ? { stale: true } : {}), ...(/:root$/.test(s.values.login_session ?? '') ? { root: true } : {}),
     }
   }))
 }

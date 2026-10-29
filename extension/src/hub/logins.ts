@@ -8,7 +8,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { writeJsonAtomic } from '../hook-entries'
 import type { WebviewToExtensionMessage } from '../protocol'
-import type { WebApp, WebLogin } from './types'
+import type { ChromeProfile, Links, WebApp, WebLogin } from './types'
 
 export const LOGINS = path.join(os.homedir(), '.claude', 'switchboard', 'logins.json')
 export const AUTH0: WebApp = { id: 'auth0', name: 'Auth0', url: 'https://manage.auth0.com/', logins: [] }
@@ -47,15 +47,70 @@ export function readLogins(file = LOGINS): WebApp[] {
   })
 }
 
-export function writeLogins(apps: WebApp[], file = LOGINS): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  writeJsonAtomic(file, { apps })
+/** Links to apps and logins that still exist; a gone login falls back to the app default (null). */
+export function pruneLinks(links: unknown, apps: WebApp[]): Links {
+  const out: Links = {}
+  if (!links || typeof links !== 'object') return out
+  for (const [folder, row] of Object.entries(links)) {
+    if (!row || typeof row !== 'object') continue
+    const kept: Record<string, string | null> = {}
+    for (const [id, login] of Object.entries(row)) {
+      const app = apps.find(a => a.id === id)
+      if (app) kept[id] = typeof login === 'string' && app.logins.some(l => l.id === login) ? login : null
+    }
+    if (Object.keys(kept).length) out[folder] = kept
+  }
+  return out
 }
 
-export type LoginCommand = Extract<WebviewToExtensionMessage, { type: `hub-login-${string}` }>
+export function readLinks(file = LOGINS, apps = readLogins(file)): Links {
+  try { return pruneLinks(JSON.parse(fs.readFileSync(file, 'utf8')).links, apps) } catch { return {} }
+}
 
-/** The apps after one command, or why it was refused. Opening a login only saves its browser here; the caller opens it. */
-export function applyLogin(apps: WebApp[], c: LoginCommand, newId = () => randomUUID().slice(0, 8)): WebApp[] | string {
+/** Keeps the saved links unless given new ones, pruned to what apps still holds. */
+export function writeLogins(apps: WebApp[], file = LOGINS, links: Links = readLinks(file)): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  writeJsonAtomic(file, { apps, links: pruneLinks(links, apps) })
+}
+
+export type LinkCommand = Extract<WebviewToExtensionMessage, { type: 'hub-login-link' }>
+export type LoginCommand = Exclude<Extract<WebviewToExtensionMessage, { type: `hub-login-${string}` }>, LinkCommand>
+
+/** The links after one command, or why it was refused. folders: the project folders Switchboard knows. */
+export function applyLink(apps: WebApp[], links: Links, c: LinkCommand, folders: string[]): Links | string {
+  if (!folders.includes(c.folder)) return 'that folder is not in the project list'
+  const app = apps.find(a => a.id === c.app)
+  if (!app) return 'no such app'
+  if (c.login !== null && c.login !== 'off' && !app.logins.some(l => l.id === c.login)) return 'no such login'
+  const { [app.id]: _was, ...rest } = links[c.folder] ?? {}
+  const row = c.login === 'off' ? rest : { ...rest, [app.id]: c.login }
+  const { [c.folder]: _old, ...others } = links
+  return Object.keys(row).length ? { ...others, [c.folder]: row } : others
+}
+
+/** The login Sign in opens with no id: the project's pick, else the app's active one. */
+export const loginFor = (app: WebApp, links: Links, folder: string | undefined): string | undefined =>
+  (folder ? links[folder]?.[app.id] : undefined) ?? app.active
+
+/** One line for a new chat's system note naming the project's accounts; labels and Chrome profile names only. */
+export function accountsNote(apps: WebApp[], links: Links, folder: string, chrome: ChromeProfile[]): string | undefined {
+  const parts = Object.keys(links[folder] ?? {}).flatMap(id => {
+    const app = apps.find(a => a.id === id)
+    if (!app) return []
+    const row = app.logins.find(l => l.id === loginFor(app, links, folder))
+    if (!row) return [`${app.name} has no saved login`]
+    const browser = row.chrome ? `Chrome ${chrome.find(c => c.dir === row.chrome)?.name ?? row.chrome}` : 'system browser'
+    return [`${app.name} uses ${row.label} (${browser})`]
+  })
+  return parts.length ? `Web accounts for this project: ${parts.join('; ')}.` : undefined
+}
+
+/**
+ * The apps after one command, or why it was refused. Opening a login only saves its browser here; the caller opens it.
+ * chromes: Chrome's profile folders; a command naming another one is refused before anything is saved.
+ */
+export function applyLogin(apps: WebApp[], c: LoginCommand, newId = () => randomUUID().slice(0, 8), chromes?: string[]): WebApp[] | string {
+  if ('chrome' in c && c.chrome && chromes && !chromes.includes(c.chrome)) return 'That Chrome profile is not in Chrome\'s list'
   if (c.type === 'hub-login-app-add') {
     const name = clean(c.name, 40), url = loginUrl(c.url)
     if (!name) return 'give the app a name'

@@ -6,14 +6,15 @@
  * GET  /hub/keep    what a full chat does: always continue in a fresh chat (token in the query)
  * GET  /hub/brief   the brief for a new chat in ?cwd= (token in the query); its own project only
  * GET  /hub/ask     ?cwd=&q=: one paid Haiku answer from that project's board (token in the query)
- * GET  /hub/state   the whole HubState, for the standalone web app's proxy (token in the query)
+ * GET  /hub/state   the whole HubState, for the standalone web app's proxy (token in the query); no thisWindow, it is no window
  * POST /hub/command a hub-* command, run as the panel's (token in the query)
+ * POST /hub/device  the standalone app passes on a device asking to sign in, or that it was answered (token in the query)
  * Anything outside /hub answers undefined and stays with the hook handler.
  */
 import { askBrain, askContext, brief } from './brain'
 import type { HubService } from './hub-service'
 import type { WebviewToExtensionMessage } from '../protocol'
-import type { SettingKey, SwitchboardKey } from './types'
+import type { GitOp, SettingKey, SwitchboardKey } from './types'
 import { isAi } from './ais'
 import { ROLE_MODELS } from './roles'
 
@@ -30,15 +31,20 @@ const opt = (f: Check): Check => v => v === undefined || f(v)
 const oneOf = (...xs: unknown[]): Check => v => xs.includes(v)
 const any = (...fs: Check[]): Check => v => fs.some(f => f(v))
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+// One option index per question, at most four.
+const picks: Check = v => Array.isArray(v) && v.length > 0 && v.length <= 4 && v.every(x => Number.isInteger(x) && x >= 0 && x < 10)
 const flags = (v: unknown) => obj(v) && Object.values(v).every(bool)
-const profile: Check = v => obj(v) && flags(v.plugins) && flags(v.skills)
+const profile: Check = v => obj(v) && flags(v.plugins) && flags(v.skills) && (v.assets === undefined || flags(v.assets))
 const SETTING_KEYS: SettingKey[] = ['autoCompactEnabled', 'autoCompactWindow', 'autoContinueAtUsageLimit', 'remoteControlAtStartup', 'agentPushNotifEnabled', 'inputNeededNotifEnabled', 'model', 'effortLevel', 'tui', 'statusLine']
+const GIT_OPS: GitOp[] = ['sync', 'commit', 'commit-push', 'switch', 'create', 'undo', 'discard', 'pr', 'stash', 'pop', 'delete-branch']
+const paths: Check = v => Array.isArray(v) && v.length <= 1000 && v.every(x => typeof x === 'string')
 const SWITCHBOARD_KEYS: SwitchboardKey[] = ['hooks', 'statusBar', 'idleMinutes', 'brief', 'askBrain', 'syncRules']
 
 /** Every field of every hub command, as protocol.ts declares it; the runner trusts these types. */
 const SHAPES: { [T in HubCommand['type']]: { [K in Exclude<keyof Extract<HubCommand, { type: T }>, 'type'>]-?: Check } } = {
   'hub-refresh': {},
   'hub-send': { sessionId: str, text: str },
+  'hub-answer': { sessionId: str, askId: str, choice: picks },
   'hub-rc': { on: bool, sessionId: opt(str) },
   'hub-open-url': { url: str },
   'hub-web': { phone: bool },
@@ -67,7 +73,9 @@ const SHAPES: { [T in HubCommand['type']]: { [K in Exclude<keyof Extract<HubComm
   'hub-aws-delete': { profile: str },
   'hub-login-app-add': { name: str, url: str },
   'hub-login-add': { app: str, label: str, url: str, chrome: opt(str) },
-  'hub-login-open': { app: str, id: str, chrome: opt(str) },
+  'hub-login-open': { app: str, id: opt(str), chrome: opt(str), folder: opt(str) },
+  'hub-login-link': { folder: str, app: str, login: any(str, oneOf(null)) },
+  'hub-browser': { folder: str, chrome: any(str, oneOf(null)) },
   'hub-login-active': { app: str, id: str },
   'hub-login-rename': { app: str, id: str, label: str },
   'hub-login-delete': { app: str, id: str },
@@ -83,6 +91,8 @@ const SHAPES: { [T in HubCommand['type']]: { [K in Exclude<keyof Extract<HubComm
   'hub-dev-start': { folder: str },
   'hub-dev-stop': { folder: str },
   'hub-awake': { on: bool },
+  'hub-device': { id: str, allow: bool },
+  'hub-git': { sessionId: str, op: oneOf(...GIT_OPS), files: opt(paths), summary: opt(str), description: opt(str), branch: opt(str), stash: opt(bool), confirmed: opt(bool) },
 }
 
 /** Why a command is refused, or undefined when every field has its declared type. */
@@ -139,7 +149,7 @@ export function handleHub(hub: HubService, method: string | undefined, url: stri
   if (method === 'GET' && u.pathname === '/hub/state') {
     if (!hub.isToken(u.searchParams.get('token'))) return { status: 403, body: '' }
     hub.stateReadAt = Date.now()
-    return { status: 200, body: JSON.stringify({ ...hub.get(), phoneUrl: null }), contentType: 'application/json' }
+    return { status: 200, body: JSON.stringify({ ...hub.get(), phoneUrls: null, thisWindow: undefined, devices: undefined }), contentType: 'application/json' }
   }
 
   if (method === 'POST' && u.pathname === '/hub/command') {
@@ -157,5 +167,23 @@ export function handleHub(hub: HubService, method: string | undefined, url: stri
     }
   }
 
+  if (method === 'POST' && u.pathname === '/hub/device') {
+    if (!hub.isToken(u.searchParams.get('token'))) return { status: 403, body: '' }
+    let d: unknown
+    try { d = JSON.parse(body) } catch { return { status: 400, body: '' } }
+    if (!deviceShape(d)) return { status: 400, body: '' }
+    if (!hub.onDevice) return { status: 503, body: '' }
+    hub.onDevice(d)
+    return { status: 204, body: '' }
+  }
+
   return { status: 404, body: '' }
+}
+
+// Short strings only: they end up in a VS Code prompt.
+const short = (v: unknown) => typeof v === 'string' && v.length > 0 && v.length <= 64
+function deviceShape(d: unknown): d is Parameters<NonNullable<HubService['onDevice']>>[0] {
+  if (!obj(d) || typeof d.id !== 'string' || !/^[0-9a-f]{32}$/.test(d.id)) return false
+  if ('done' in d) return d.done === true
+  return short(d.ip) && short(d.ua) && (d.network === 'Wi-Fi' || d.network === 'Tailscale') && Number.isInteger(d.port) && (d.port as number) > 0 && (d.port as number) < 65536
 }

@@ -1,7 +1,7 @@
 /** The standalone web app's calls to its own proxy. */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { fetchHub, phoneNetwork, postCommand } from './hub-remote'
+import { fetchHub, postCommand } from './hub-remote'
 
 describe('hub-remote', () => {
   it('sends the Switchboard header and answers null when the proxy fails', async () => {
@@ -29,16 +29,5 @@ describe('hub-remote', () => {
     assert.match((await postCommand({ type: 'hub-refresh' }, bare)) ?? '', /502/)
     const thrown = (async () => { throw new Error('no server') }) as typeof fetch
     assert.match((await postCommand({ type: 'hub-refresh' }, thrown)) ?? '', /reach/)
-  })
-})
-
-describe('phoneNetwork', () => {
-  it('names Tailscale for a 100.64.0.0/10 link, else Wi-Fi', () => {
-    assert.equal(phoneNetwork('http://100.101.2.3:3131/?k=abc'), 'Tailscale')
-    assert.equal(phoneNetwork('http://100.64.0.1:3131/?k=abc'), 'Tailscale')
-    assert.equal(phoneNetwork('http://100.127.0.1:3131/?k=abc'), 'Tailscale')
-    assert.equal(phoneNetwork('http://100.128.0.1:3131/?k=abc'), 'Same Wi-Fi only')
-    assert.equal(phoneNetwork('http://192.168.1.5:3131/?k=abc'), 'Same Wi-Fi only')
-    assert.equal(phoneNetwork('not a url'), 'Same Wi-Fi only')
   })
 })

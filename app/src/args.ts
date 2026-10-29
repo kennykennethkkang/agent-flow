@@ -26,7 +26,7 @@ Usage: agent-flow [options]
 Options:
   -p, --port <number>  Port for the server (default: ${DEFAULT_RELAY_PORT})
   --no-open            Don't open the browser automatically
-  --lan                Also listen on this Mac's Wi-Fi and Tailscale addresses, for a phone (needs the QR secret)
+  --lan                Also answer on this Mac's network addresses (Wi-Fi, Tailscale), for a phone (needs the QR secret)
   -v, --verbose        Show detailed event logs
   -h, --help           Show this help message
 `)

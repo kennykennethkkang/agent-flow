@@ -219,12 +219,17 @@
   --hub-blue: #57c1ff;
   --hub-red: #ff6161;
   --hub-green: #59d499;
+  /* Almost done: finished, with Left items in its standup. */
+  --hub-teal: #45c8d6;
   --hub-yellow: #ffc533;
   /* An accent for extra roles on the chat map (jev); never a state color. */
   --hub-violet: #a98bff;
+  /* VS Code window colors, by palette key (extension/src/hub/colors.ts). */
+  --hub-w-violet: #a08bff; --hub-w-amber: #f2b24c; --hub-w-teal: #4fd1c9; --hub-w-rose: #ff7ab3; --hub-w-lime: #9bd65a; --hub-w-cobalt: #7ea2ff;
   --hub-blue-soft: rgba(87, 193, 255, 0.15);
   --hub-red-soft: rgba(255, 97, 97, 0.15);
   --hub-green-soft: rgba(89, 212, 153, 0.15);
+  --hub-teal-soft: rgba(69, 200, 214, 0.15);
   --hub-yellow-soft: rgba(255, 197, 51, 0.15);
   --hub-primary: #ffffff;
   --hub-on-primary: #000000;
@@ -246,11 +251,14 @@ body.vscode-light, body.vscode-high-contrast-light {
   --hub-blue: #0a6fbd;
   --hub-red: #cc2e39;
   --hub-green: #0d7f50;
+  --hub-teal: #0a7c8a;
   --hub-yellow: #946000;
   --hub-violet: #6a4cd0;
+  --hub-w-violet: #6a4cd0; --hub-w-amber: #b26b00; --hub-w-teal: #0b8a87; --hub-w-rose: #b8306f; --hub-w-lime: #4a7d12; --hub-w-cobalt: #2f5fd0;
   --hub-blue-soft: rgba(10, 111, 189, 0.11);
   --hub-red-soft: rgba(204, 46, 57, 0.11);
   --hub-green-soft: rgba(13, 127, 80, 0.11);
+  --hub-teal-soft: rgba(10, 124, 138, 0.11);
   --hub-yellow-soft: rgba(148, 96, 0, 0.11);
   --hub-primary: #121314;
   --hub-on-primary: #ffffff;
@@ -270,11 +278,14 @@ body.vscode-light, body.vscode-high-contrast-light {
     --hub-blue: #0a6fbd;
     --hub-red: #cc2e39;
     --hub-green: #0d7f50;
+    --hub-teal: #0a7c8a;
     --hub-yellow: #946000;
     --hub-violet: #6a4cd0;
+    --hub-w-violet: #6a4cd0; --hub-w-amber: #b26b00; --hub-w-teal: #0b8a87; --hub-w-rose: #b8306f; --hub-w-lime: #4a7d12; --hub-w-cobalt: #2f5fd0;
     --hub-blue-soft: rgba(10, 111, 189, 0.11);
     --hub-red-soft: rgba(204, 46, 57, 0.11);
     --hub-green-soft: rgba(13, 127, 80, 0.11);
+    --hub-teal-soft: rgba(10, 124, 138, 0.11);
     --hub-yellow-soft: rgba(148, 96, 0, 0.11);
     --hub-primary: #121314;
     --hub-on-primary: #ffffff;
@@ -319,6 +330,7 @@ body.vscode-light, body.vscode-high-contrast-light {
   .hub-card[aria-pressed='true']:hover { background: var(--hub-card); }
 }
 @media (pointer: coarse) { .hub-btn, .hub-switch, .hub-seg > button, .hub select, .hub-search { min-height: 44px; } .hub-btn { min-width: 44px; } }
+.hub-btn:disabled, .hub-link:disabled { opacity: 0.45; cursor: default; }
 .hub-chip { display: inline-flex; align-items: center; gap: 6px; font: 500 11px/1 var(--hub-mono); padding: 4px 8px; border-radius: 99px; white-space: nowrap; }
 .hub-chip > i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 /* A chat's place in its chain (v2, v3): quieter than the state chip. */
@@ -387,3 +399,42 @@ body.vscode-light, body.vscode-high-contrast-light {
 @starting-style { .hub-palette { opacity: 0; transform: translateY(-4px) scale(0.99); } }
 .hub-palette { transition: opacity 160ms var(--hub-ease-out), transform 160ms var(--hub-ease-out); }
 @media (prefers-reduced-motion: reduce) { .hub-palette { transition-property: opacity; } }
+
+/* Settings: section nav beside the rows, a wrapping row on a phone. */
+.hub-settings { display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 8px 28px; padding: 16px; border-bottom: 1px solid var(--hub-hair); background: var(--hub-surface); }
+.hub-set-nav { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.hub-set-nav > div { display: grid; gap: 2px; }
+.hub-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.hub-set-nav button, .hub-tabs > button {
+  text-align: left; background: none; border: 0; border-radius: 6px; padding: 8px 10px; cursor: pointer;
+  font: 500 13px/1 var(--hub-sans); color: var(--hub-mute); transition: background-color 160ms ease, color 160ms ease;
+}
+.hub-set-nav button[aria-selected='true'], .hub-tabs > button[aria-selected='true'] { background: var(--hub-elev); color: var(--hub-ink); box-shadow: inset 0 0 0 1px var(--hub-hair); }
+.hub-set-nav button:focus-visible, .hub-tabs > button:focus-visible { outline: 2px solid var(--hub-blue); outline-offset: 0; }
+@media (hover: hover) and (pointer: fine) { .hub-set-nav button:hover, .hub-tabs > button:hover { color: var(--hub-ink); } }
+@media (max-width: 640px) {
+  .hub-settings { grid-template-columns: minmax(0, 1fr); }
+  .hub-set-nav > div { display: flex; flex-wrap: wrap; gap: 4px; }
+}
+@media (pointer: coarse) { .hub-set-nav button, .hub-tabs > button { min-height: 44px; } }
+.hub-set-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 10px 0; border-top: 1px solid var(--hub-hair); color: var(--hub-body); min-width: 0; }
+.hub-set-row > span:first-child { flex: 1 1 220px; }
+.hub-settings > [role='tabpanel'] { max-width: 760px; }
+.hub-set-row .hub-select { width: 13rem; }
+.hub-settings > [role='tabpanel'] > .hub-set-row:first-child { border-top: 0; padding-top: 0; }
+.hub-select {
+  font: 400 13px/1.2 var(--hub-sans); padding: 7px 10px; border-radius: 8px; border: 1px solid var(--hub-hair);
+  background: var(--hub-canvas); color: var(--hub-ink); min-width: 0; max-width: 100%; text-overflow: ellipsis; cursor: pointer;
+}
+.hub-fold-list > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--hub-hair); cursor: pointer; }
+.hub-fold-list > summary::-webkit-details-marker { display: none; }
+.hub-fold-list > summary:focus-visible { outline: 2px solid var(--hub-blue); outline-offset: 2px; }
+.hub-fold-list > summary > b { width: 14px; color: var(--hub-ash); font-weight: 400; transition: transform 160ms var(--hub-ease-out); }
+.hub-fold-list[open] > summary > b { transform: rotate(90deg); }
+.hub-names { list-style: none; margin: 0 0 12px 22px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.hub-names > li {
+  font: 400 12px/1 var(--hub-mono); color: var(--hub-body); padding: 5px 8px; border-radius: 6px; background: var(--hub-elev);
+  box-shadow: inset 0 0 0 1px var(--hub-hair); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box;
+}
+@media (pointer: coarse) { .hub-fold-list > summary { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .hub-fold-list > summary > b, .hub-set-nav button, .hub-tabs > button { transition-property: opacity, background-color, color; } }

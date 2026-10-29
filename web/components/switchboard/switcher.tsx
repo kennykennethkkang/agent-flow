@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { rankItems, type SwitchItem } from '@/lib/switcher'
-import { STATE } from './look'
+import { ALMOST, STATE } from './look'
 
 const Marked = ({ text, hits }: { text: string; hits: number[] }) => {
   const on = new Set(hits)
@@ -42,7 +42,7 @@ export function Switcher({ items, onPick, onClose }: { items: SwitchItem[]; onPi
                 <Marked text={item.name} hits={hits} />{item.version > 1 && <span className="hub-chip ver" style={{ marginLeft: 6 }}>v{item.version}</span>}
               </span>
               {item.kind === 'live'
-                ? <span className="hub-chip" style={{ color: STATE[item.state].color, background: STATE[item.state].soft }}><i aria-hidden />{STATE[item.state].label}</span>
+                ? (s => <span className="hub-chip" style={{ color: s.color, background: s.soft }}><i aria-hidden />{s.label}</span>)(item.almost ? ALMOST : STATE[item.state])
                 : <span style={{ font: '400 12px/1 var(--hub-mono)', color: 'var(--hub-ash)' }}>History</span>}
             </li>
           ))}

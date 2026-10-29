@@ -10,17 +10,21 @@ import * as path from 'path'
 import * as crypto from 'crypto'
 import { execFile, spawn } from 'child_process'
 import { hub, type Handoff } from './hub-service'
-import type { AiId, ChatProfile, ChatRow } from './types'
-import { AIS, cliPath, codexPaste, codexReady } from './ais'
+import type { AiId, ChatProfile, ChatRow, Installed } from './types'
+import { AIS, chatTerminal, cliPath, codexPaste, codexReady } from './ais'
 import { quickAsk, withBrief } from './brain'
 import { rulesState, withPointer } from './rules'
+import { accountsNote, readLinks, readLogins } from './logins'
 import { awsBinary, profileFor, readPrefs, validProfileName, writeOpenChrome, writePrefs } from './aws'
 import { chainBase, chainVersion, cloneTarget, freshPrompt, inWorkspace, labelNote, newChatCommand, nextChainName, stillRunning } from './projects'
-import { insideCwd, safeFile } from './local'
+import { insideCwd, projectContext, projectInventory, safeFile } from './local'
 import { matchCodexStarts, recordArchive, recordChain, type CodexStart } from './chains'
 import { RC_NAME, rcRunning, rcServerCommand } from './sessions'
 import { titleFor } from './title'
-import { FLAGGED, TOOLS_NOTE, cleanProfile, pickProfile, readProfiles, saveProfile } from './tools'
+import { FLAGGED, PICK_MS, cleanProfile, pickProfile, readProfiles, saveProfile, toolsNote } from './tools'
+import { createLogger } from '../logger'
+
+const log = createLogger('Tools')
 
 const SHELL = process.platform === 'win32' ? 'powershell' : 'posix'
 // A window opened by `code` from inside a chat inherits Claude's child marker, and a chat started
@@ -28,8 +32,8 @@ const SHELL = process.platform === 'win32' ? 'powershell' : 'posix'
 const OWN_CHAT = { CLAUDE_CODE_CHILD_SESSION: null }
 /** A chat terminal's env: no child marker, and the AWS profile picked for its folder (Sign-ins). */
 const chatEnv = (cwd: string): Record<string, string | null> => {
-  const p = profileFor(hub.get().signIns.projects, cwd)
-  return { ...OWN_CHAT, ...(p && validProfileName(p) ? { AWS_PROFILE: p } : {}) }
+  const p = profileFor(hub.get().signIns.projects, cwd), b = profileFor(hub.get().signIns.browsers ?? {}, cwd)
+  return { ...OWN_CHAT, ...(p && validProfileName(p) ? { AWS_PROFILE: p } : {}), ...(b ? { BROWSER: writeOpenChrome(), SWITCHBOARD_CHROME_DIR: b } : {}) }
 }
 const HANDOFFS = path.join(os.homedir(), '.claude', 'handoffs')
 // A Codex chat has no pid to stop: the terminal Switchboard started it in, by session id. A terminal waits in
@@ -111,11 +115,11 @@ export async function newChat(folder: string, text: string | undefined, remote: 
   const project = hub.get().projects.find(p => p.path === folder)
   if (!project) return `${folder} is not in the project list yet; open Switchboard once and try again`
   const goal = text?.trim()
-  const inv = hub.get().installed
+  const inv = ai === 'claude' && hub.get().installed.length ? await chatInventory(folder) : []
   // A Claude chat with a goal gets its own tool set: the one sent, else one picked now. Codex keeps its own.
   const [title, profile] = await Promise.all([
     goal ? titleFor(goal, quickAsk) : project.name,
-    ai === 'claude' && inv.length ? (tools ? cleanProfile(tools, inv) : goal ? pickProfile(goal, inv, quickAsk) : undefined) : undefined,
+    inv.length ? (tools ? cleanProfile(tools, inv) : goal ? pickFor(goal, inv, folder) : undefined) : undefined,
   ])
   // Codex has no hook to read the brief from, so it rides in front of the first message.
   const first = withPointer(ai === 'claude' ? '' : withBrief(hub.get(), folder, text), rulesState.ready[ai], rulesState.kit)
@@ -132,7 +136,7 @@ export async function newChat(folder: string, text: string | undefined, remote: 
     const sessionId = profile ? crypto.randomUUID() : undefined
     const settings = sessionId && profile ? saveProfile(sessionId, profile) : undefined
     if (sessionId && profile) setChatProfile(sessionId, profile)
-    command = newChatCommand({ textFile: messageFile(withPointer(text ?? '', rulesState.ready.claude, rulesState.kit)), name: title, remote: remote ? title : undefined, branch, sessionId, settings, system: settings ? TOOLS_NOTE : undefined }, SHELL)
+    command = newChatCommand({ textFile: messageFile(withPointer(text ?? '', rulesState.ready.claude, rulesState.kit)), name: title, remote: remote ? title : undefined, branch, sessionId, settings, system: [settings && profile ? toolsNote(profile) : '', accountsNote(readLogins(), readLinks(), folder, hub.get().signIns.chrome) ?? ''].filter(Boolean).join(' ') || undefined }, SHELL)
   } catch (err) {
     return (err as Error).message
   }
@@ -167,21 +171,26 @@ export function stopDev(project: string): boolean {
   return !!t
 }
 
+/** The user's plugins and skills plus the project's own skills and design references. */
+const chatInventory = async (folder: string | undefined) => [...hub.get().installed, ...(folder ? await projectInventory(folder).catch(() => []) : [])]
+const pickFor = async (goal: string, inv: Installed[], folder?: string) =>
+  pickProfile(goal, inv, quickAsk, PICK_MS, why => log.warn(`Tool pick fell back to the default set (${why})`), folder ? await projectContext(folder).catch(() => '') : '')
+
 const toolsState = () => hub.get().tools ?? { flagged: FLAGGED, pick: null, chats: {} }
 /** Shows a chat's saved profile in the panel at once, before the next refresh reads it back. */
 export const setChatProfile = (sessionId: string, p: ChatProfile) => hub.set({ tools: { ...toolsState(), chats: { ...toolsState().chats, [sessionId]: p } } })
 
 /** The New chat form's pick for a goal, shown as chips before Start. */
 export async function pickTools(goal: string): Promise<void> {
-  const inv = hub.get().installed
-  const profile = await pickProfile(goal, inv, quickAsk)
+  const profile = await pickFor(goal, hub.get().installed)
   hub.set({ tools: { ...toolsState(), pick: { goal, profile } } })
 }
 
 /** A chat's tools changed in the panel: saved now, used when it is resumed. */
-export function saveChatTools(sessionId: string, p: ChatProfile): string | undefined {
+export async function saveChatTools(sessionId: string, p: ChatProfile): Promise<string | undefined> {
   if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return 'Not a chat id'
-  const profile = cleanProfile(p, hub.get().installed)
+  // The chat's own folder, so its project skills and design references survive the save.
+  const profile = cleanProfile(p, await chatInventory(hub.get().chats.find(c => c.sessionId === sessionId)?.cwd))
   saveProfile(sessionId, profile)
   setChatProfile(sessionId, profile)
   return undefined
@@ -250,6 +259,19 @@ export function focusChat(sessionId: string): boolean {
   return !!t
 }
 
+/** Types a prompt's answer into the chat's terminal, one key at a time; 300ms apart was checked to land. */
+/** claim runs once the terminal is known, before any key goes out, so a refused answer leaves the prompt showing; false: a second tap got there first. */
+export async function answerInTerminal(pid: number, keys: string[], claim: () => boolean): Promise<string | undefined> {
+  const t = await chatTerminal(pid, vscode.window.terminals)
+  if (!t) return 'that chat runs outside this VS Code window, so answer it in its terminal'
+  if (!claim()) return 'that prompt is already answered or gone'
+  for (const [i, k] of keys.entries()) {
+    if (i) await new Promise(r => setTimeout(r, 300))
+    t.sendText(k, false)
+  }
+  return undefined
+}
+
 /** Reopens a chat by its id in a new terminal in the chat's folder. */
 export async function resumeChat(sessionId: string, ai: AiId): Promise<string | undefined> {
   // The id goes into a shell line: only the hex and dashes a session id has.
@@ -313,7 +335,7 @@ export async function continueInFreshChat(h: Handoff, workspace: string | undefi
   const freshId = carried ? crypto.randomUUID() : undefined
   let settings: string | undefined
   try { settings = freshId && carried ? saveProfile(freshId, carried) : undefined } catch { /* starts with the user's defaults */ }
-  const tools = settings ? { sessionId: freshId, settings, system: TOOLS_NOTE } : {}
+  const tools = settings && carried ? { sessionId: freshId, settings, system: toolsNote(carried) } : {}
   const claude = (branch?: string) => newChatCommand({ textFile: messageFile(text), name: fresh, remote: hub.get().rc.atStartup ? fresh : undefined, branch, ...tools }, SHELL)
   let command = ''
   try {

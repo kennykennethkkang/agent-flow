@@ -2,7 +2,7 @@
   "name": "switchboard",
   "displayName": "Switchboard",
   "description": "Claude Code sessions, usage, timeline and controls in one panel. Based on Agent Flow.",
-  "version": "0.17.22",
+  "version": "0.17.32",
   "publisher": "kennykennethkkang",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
@@ -110,6 +110,11 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically open the visualizer when an agent session starts"
+        },
+        "switchboard.colorTitleBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Tint this window's title bar in its Switchboard color. Written to the workspace's .vscode/settings.json; title bar colors you set yourself are left alone."
         }
       }
     },

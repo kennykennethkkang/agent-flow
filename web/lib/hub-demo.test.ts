@@ -72,6 +72,17 @@ test('the demo Sign-ins: make default, rename, add, pick for this window', () =>
   assert.equal(h.signIns.projects[h.signIns.window!], undefined)
 })
 
+test('the demo browser per project: set, system browser, forget', () => {
+  let h = demoHub()
+  const folder = h.signIns.window!, dir = h.signIns.chrome[0].dir
+  h = demoApply(h, { type: 'hub-browser', folder, chrome: dir })
+  assert.equal(h.signIns.browsers?.[folder], dir)
+  h = demoApply(h, { type: 'hub-browser', folder, chrome: '' })
+  assert.equal(h.signIns.browsers?.[folder], '')
+  h = demoApply(h, { type: 'hub-browser', folder, chrome: null })
+  assert.equal(folder in (h.signIns.browsers ?? {}), false)
+})
+
 test('a demo role model pick changes only that role', () => {
   const h = demoApply(demoHub(0), { type: 'hub-role-model', role: 'ops', model: 'haiku' })
   assert.equal(h.installed.find(i => i.name === 'ops')?.model, 'haiku')

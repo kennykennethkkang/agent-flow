@@ -9,26 +9,29 @@ import * as path from 'path'
 import { hub } from './hub-service'
 import { HistoryScanner } from './history'
 import { applyPatch, controlPatch, readControls } from './controls'
-import type { ChatRow, SwitchboardKey } from './types'
+import type { ChatRow, DeviceAsk, SwitchboardKey, WindowColor } from './types'
+import { SHADES, titleBar, titleBarColors, windowColors } from './colors'
 import { FLAGGED, readProfiles } from './tools'
-import { connections, ensureWeb, gitState, installed, listServers, newestPlan, newestPlanFile, phoneUrl, projectFolders, readChanges, webUrl } from './local'
-import { awsLogin, openLogin, bindCodexTerminals, startDev, stopDev, cloneProject, closeCodexChat, codexTied, sendToCodex, continueInFreshChat, exportKit, focusChat, headBranch, newChat, openDiff, openNote, openProject, pickTools, rcServer, rcServers, resumeChat, saveChatTools } from './actions'
+import { connections, ensureWeb, gitState, installed, listServers, newestPlan, newestPlanFile, phoneUrls, projectFolders, readChanges, webUrl } from './local'
+import { awsLogin, answerInTerminal, openLogin, bindCodexTerminals, startDev, stopDev, cloneProject, closeCodexChat, codexTied, sendToCodex, continueInFreshChat, exportKit, focusChat, headBranch, newChat, openDiff, openNote, openProject, pickTools, rcServer, rcServers, resumeChat, saveChatTools } from './actions'
 import { chatTerminal, closeChatTerminal, codexFiles, lastCodexPrompt, readAis, rolloutLines } from './ais'
 import { dueForHandoff, fullCodex, idleHandedOff, readArchive, readChains, removeArchive, searchNotes } from './chains'
 import { newestNotes, readStarred, starredRows, toggleStar, writeStarred } from './starred'
 import { rcTargets, readChats } from './sessions'
 import { chainVersion, cloneTarget, codexNote, handoffFile, mergeProjects, planLabel } from './projects'
-import { addProfile, awsProfiles, deleteAwsProfile, makeDefault, parseAwsConfig, readAwsConfig, readChrome, readLabels, readPrefs, validProfileName, writeAwsConfig, writeLabels, writePrefs } from './aws'
+import { addAwsProfile, awsProfiles, deleteAwsProfile, makeDefault, parseAwsConfig, profileFor, readAwsConfig, readChrome, readLabels, readPrefs, validProfileName, writeAwsConfig, writeLabels, writeOpenChrome, writePrefs } from './aws'
 import { execFile } from 'child_process'
 import * as fs from 'fs'
 import { hasAgentFlowHook, readSettingsFile, removeAgentFlowHooks, writeJsonAtomic } from '../hook-entries'
 import { configureClaudeHooks } from '../hooks-config'
+import { askKeys } from './progress'
 import type { ExtensionToWebviewMessage, WebviewToExtensionMessage } from '../protocol'
 import { createLogger } from '../logger'
 import { Posters, tickWork } from './posters'
 import { kitHash, rulesState, syncRules, type SyncResult } from './rules'
-import { applyLogin, readLogins, writeLogins, type LoginCommand } from './logins'
+import { LOGINS, applyLink, applyLogin, loginFor, pruneLinks, readLinks, readLogins, writeLogins, type LinkCommand, type LoginCommand } from './logins'
 import { setRoleModel } from './roles'
+import { ghPath, gitOp, readRepo, repoRoot } from './git'
 import { awakePid, devHome, devRows, knownDev, postWindow, readDev, readWindows, serve, setAwake, tailnet } from './dev'
 
 const log = createLogger('Hub')
@@ -69,6 +72,10 @@ const codexBusySince = new Map<string, number>()
 let envs: vscode.GlobalEnvironmentVariableCollection | undefined
 let awsAt = -Infinity
 let statusBar: vscode.StatusBarItem | undefined
+// This window's colored folder name, left of the Switchboard button; the title bar keys Switchboard wrote, per workspace.
+let windowItem: vscode.StatusBarItem | undefined
+let windowStore: vscode.Memento | undefined
+const TITLE_KEY = 'switchboard.titleBar'
 let pending: NodeJS.Timeout | undefined
 const workspace = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
 const refreshers: Array<() => void | Promise<void>> = []
@@ -103,12 +110,26 @@ export function startHub(context: vscode.ExtensionContext): void {
   store = context.globalState
   for (const id of store.get<string[]>(HANDED_KEY) ?? []) handedOff.add(id)
   hub.runner = c => handleHubMessage(c as WebviewToExtensionMessage)
+  hub.onDevice = d => {
+    if ('done' in d) asking.delete(d.id)
+    else { asking.set(d.id, { ...d, at: Date.now() }); setTimeout(listDevices, ASK_MS) }
+    listDevices()
+    promptDevices()
+  }
+  context.subscriptions.push(vscode.window.onDidChangeWindowState(s => { if (s.focused) promptDevices() }))
   // A stored onFull 'compact' from an older Switchboard is ignored: a full chat always continues fresh.
   const kept = store.get<{ freshBranch?: boolean }>(KEEP_KEY) ?? {}
   hub.set({ keep: { ...hub.get().keep, onFull: 'fresh', freshBranch: kept.freshBranch === true } })
   const controls = hub.get().controls
   hub.set({ controls: { ...controls, switchboard: { ...controls.switchboard, ...store.get(CONTROLS_KEY) } } })
   applyStatusBar()
+  windowStore = context.workspaceState
+  windowItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1)
+  windowItem.command = 'agentVisualizer.open'
+  context.subscriptions.push(windowItem,
+    vscode.window.onDidChangeActiveColorTheme(() => refreshWindows()),
+    vscode.workspace.onDidChangeConfiguration(e => { if (e.affectsConfiguration('switchboard.colorTitleBar')) refreshWindows() }))
+  refreshWindows()
   readSettings()
   rulesState.kit = path.join(context.extensionPath, 'kit')
   extensionPath = context.extensionPath
@@ -138,6 +159,7 @@ export function startHub(context: vscode.ExtensionContext): void {
   async function refreshNear() {
     nearAt = Date.now()
     readSettings()
+    refreshWindows()
     const ws = workspace()
     const stars = readStarred()
     const webDue = Date.now() - webAt >= WEB_EVERY_MS
@@ -145,7 +167,7 @@ export function startHub(context: vscode.ExtensionContext): void {
     const [plan, git, servers, notes, web] = await Promise.all([
       newestPlan(ws), gitState(ws), listServers(), newestNotes(stars.map(s => s.sessionId)), webDue ? webUrl() : hub.get().webUrl, refreshChats(),
     ])
-    hub.set({ plan, git, servers, rcServers: rcServers(), archive: readArchive(), webUrl: web, phoneUrl: await phoneUrl(web) })
+    hub.set({ plan, git, servers, rcServers: rcServers(), archive: readArchive(), webUrl: web, phoneUrls: await phoneUrls(web) })
     await refreshDev(servers)
     hub.set({ starred: starredRows(stars, hub.get(), notes, readChains()) })
     await refreshChanges(true)
@@ -234,19 +256,54 @@ async function refreshAws(force = false): Promise<void> {
   hub.set({ aws: await awsProfiles() })
 }
 
+/** Every live window with its color, and this window's status bar item and title bar in its color. */
+function refreshWindows(): void {
+  const ws = workspace()
+  let own = ws
+  try { if (ws) own = fs.realpathSync(ws) } catch { /* keep the path as VS Code has it */ }
+  const live = [...new Set([...readWindows().map(w => w.workspace), ...(own ? [own] : [])])]
+  const colors = windowColors(live)
+  hub.set({ windows: live.map(w => ({ workspace: w, name: path.basename(w), color: colors[w] })), thisWindow: own })
+  if (own) paintWindow(own, colors[own])
+}
+
+function paintWindow(own: string, color: WindowColor): void {
+  if (windowItem) {
+    const light = [vscode.ColorThemeKind.Light, vscode.ColorThemeKind.HighContrastLight].includes(vscode.window.activeColorTheme.kind)
+    windowItem.text = `$(circle-filled) ${path.basename(own)}`
+    windowItem.color = SHADES[color][light ? 'light' : 'dark']
+    windowItem.tooltip = `${path.basename(own)} window: open Switchboard`
+    windowItem.show()
+  }
+  if (!windowStore) return
+  // Merged into the workspace's colorCustomizations; a key set by hand is never touched (colors.ts titleBar).
+  const on = vscode.workspace.getConfiguration('switchboard').get('colorTitleBar', true)
+  const config = vscode.workspace.getConfiguration('workbench')
+  const r = titleBar(config.inspect<Record<string, unknown>>('colorCustomizations')?.workspaceValue, windowStore.get<Record<string, string>>(TITLE_KEY) ?? {}, on ? titleBarColors(color) : {})
+  if (!r) return
+  config.update('colorCustomizations', Object.keys(r.next).length ? r.next : undefined, vscode.ConfigurationTarget.Workspace).then(
+    () => windowStore?.update(TITLE_KEY, r.wrote),
+    err => log.warn('Could not color the title bar:', err))
+}
+
 /** Chrome profiles, the profile picked per project, and this window's AWS_PROFILE for its terminals. */
 function readSignIns(): void {
-  const { projects } = readPrefs()
-  hub.set({ signIns: { chrome: readChrome(), projects, ...(workspace() ? { window: workspace() } : {}), apps: readLogins() } })
-  applyWindowAws(projects)
+  const { projects, browsers } = readPrefs()
+  hub.set({ signIns: { chrome: readChrome(), projects, browsers, ...(workspace() ? { window: workspace() } : {}), apps: readLogins(), links: readLinks() } })
+  applyWindowAws(projects, browsers)
 }
 
 /** Each workspace folder's terminals get AWS_PROFILE for the profile picked for it; Use default takes it away. */
-function applyWindowAws(projects: Record<string, string>): void {
+function applyWindowAws(projects: Record<string, string>, browsers: Record<string, string>): void {
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     const scoped = envs?.getScoped({ workspaceFolder: folder })
     const p = projects[folder.uri.fsPath]
     if (!scoped) continue
+    // CLI sign-ins (aws login, gh auth, vercel login) open the project's Chrome profile through BROWSER.
+    const b = browsers[folder.uri.fsPath]
+    if (b) {
+      if (scoped.get('SWITCHBOARD_CHROME_DIR')?.value !== b) { scoped.replace('BROWSER', writeOpenChrome()); scoped.replace('SWITCHBOARD_CHROME_DIR', b) }
+    } else if (scoped.get('SWITCHBOARD_CHROME_DIR')) { scoped.delete('BROWSER'); scoped.delete('SWITCHBOARD_CHROME_DIR') }
     if (p && validProfileName(p)) {
       scoped.description = `Switchboard: AWS profile ${p} for this window`
       if (scoped.get('AWS_PROFILE')?.value !== p) scoped.replace('AWS_PROFILE', p)
@@ -262,13 +319,9 @@ function awsCommand(m: Extract<WebviewToExtensionMessage, { type: `hub-aws-${str
     case 'hub-aws-check': after(); return undefined
     case 'hub-aws-login':
       if (!known(m.profile)) return `no AWS profile named ${m.profile}`
-      return awsLogin(m.profile, m.chrome, after)
-    case 'hub-aws-add': {
-      const next = addProfile(readAwsConfig(), m.profile, m.region)
-      if (!next) return 'give a new profile name (letters, digits, . _ @ + -, up to 64) and a region like us-west-1'
-      writeAwsConfig(next)
-      return awsLogin(m.profile, m.chrome, after)
-    }
+      return awsLogin(m.profile, m.chrome ?? profileFor(readPrefs().browsers, workspace() ?? ''), after)
+    case 'hub-aws-add':
+      return addAwsProfile(m.profile, m.region, m.chrome, hub.get().signIns.chrome.map(c => c.dir)) ?? awsLogin(m.profile, m.chrome, after)
     case 'hub-aws-default': {
       const next = known(m.profile) ? makeDefault(readAwsConfig(), m.profile) : undefined
       if (!next) return `no AWS profile named ${m.profile}`
@@ -293,7 +346,7 @@ function awsCommand(m: Extract<WebviewToExtensionMessage, { type: `hub-aws-${str
       // Windows that picked it fall back to the default.
       const prefs = readPrefs()
       const { [m.profile]: _c, ...chrome } = prefs.chrome
-      writePrefs({ chrome, projects: Object.fromEntries(Object.entries(prefs.projects).filter(([, p]) => p !== m.profile)) })
+      writePrefs({ ...prefs, chrome, projects: Object.fromEntries(Object.entries(prefs.projects).filter(([, p]) => p !== m.profile)) })
       readSignIns()
       hub.set({ aws: hub.get().aws.filter(a => a.name !== m.profile) })
       after()
@@ -313,14 +366,39 @@ function awsCommand(m: Extract<WebviewToExtensionMessage, { type: `hub-aws-${str
 }
 
 /** Saved web logins: the change is written to logins.json; Sign in then opens the login in its Chrome profile. */
-function loginCommand(m: LoginCommand): string | undefined {
-  const next = applyLogin(readLogins(), m)
+function loginCommand(m: LoginCommand | LinkCommand): string | undefined {
+  const apps = readLogins(), links = readLinks(LOGINS, apps)
+  if (m.type === 'hub-login-link') {
+    const folders = [...hub.get().projects.map(p => p.path), ...(vscode.workspace.workspaceFolders ?? []).map(f => f.uri.fsPath)]
+    const next = applyLink(apps, links, m, folders)
+    if (typeof next === 'string') return next
+    writeLogins(apps, LOGINS, next)
+    hub.set({ signIns: { ...hub.get().signIns, links: next } })
+    return undefined
+  }
+  // Sign in with no id opens the project's pick for the app, else the app's active login.
+  const app = m.type === 'hub-login-open' && m.id === undefined ? apps.find(a => a.id === m.app) : undefined
+  const c = app && m.type === 'hub-login-open' ? { ...m, id: loginFor(app, links, m.folder) } : m
+  const next = applyLogin(apps, c, undefined, hub.get().signIns.chrome.map(x => x.dir))
   if (typeof next === 'string') return next
-  writeLogins(next)
-  hub.set({ signIns: { ...hub.get().signIns, apps: next } })
-  if (m.type !== 'hub-login-open') return undefined
-  const row = next.find(a => a.id === m.app)?.logins.find(l => l.id === m.id)
-  return row ? openLogin(row.url, row.chrome) : 'no such login'
+  writeLogins(next, LOGINS, links)
+  hub.set({ signIns: { ...hub.get().signIns, apps: next, links: pruneLinks(links, next) } })
+  if (c.type !== 'hub-login-open') return undefined
+  const row = next.find(a => a.id === c.app)?.logins.find(l => l.id === c.id)
+  // The login's own Chrome profile holds its account; without one, the project's browser.
+  return row ? openLogin(row.url, row.chrome ?? (c.folder ? profileFor(readPrefs().browsers, c.folder) : undefined)) : 'no such login'
+}
+
+/** The browser a project's links and terminal sign-ins open in; null forgets it. */
+function browserCommand(m: Extract<WebviewToExtensionMessage, { type: 'hub-browser' }>): string | undefined {
+  const folders = [...hub.get().projects.map(p => p.path), ...(vscode.workspace.workspaceFolders ?? []).map(f => f.uri.fsPath)]
+  if (!folders.includes(m.folder)) return 'that folder is not in the project list'
+  if (m.chrome && !hub.get().signIns.chrome.some(c => c.dir === m.chrome)) return 'That Chrome profile is not in Chrome\'s list'
+  const prefs = readPrefs()
+  const { [m.folder]: _was, ...rest } = prefs.browsers
+  writePrefs({ ...prefs, browsers: m.chrome === null ? rest : { ...rest, [m.folder]: m.chrome } })
+  readSignIns()
+  return undefined
 }
 
 /** The chats (every AI), and what follows from them: Codex terminals, closing handed-off Codex chats, Codex handoffs. */
@@ -376,8 +454,41 @@ async function refreshChanges(onTick = false): Promise<void> {
   if (!id || !chat?.cwd || !fs.existsSync(chat.cwd)) { if (hub.get().changes) hub.set({ changes: null }); return }
   if (onTick && chat.status === 'idle' && hub.get().changes?.sessionId === id && Date.now() - changesAt < CHANGES_IDLE_MS) return
   changesAt = Date.now()
-  const files = await readChanges(chat.cwd)
-  if (watched === id) hub.set({ changes: { sessionId: id, cwd: chat.cwd, files, at: Date.now() } })
+  const root = await repoRoot(chat.cwd)
+  const [files, repo] = await Promise.all([readChanges(chat.cwd), root ? readRepo(root, await ghPath()) : undefined])
+  if (watched !== id) return
+  const was = hub.get().repo
+  const keep = was?.sessionId === id ? { busy: was.busy, result: was.result } : {}
+  hub.set({ changes: { sessionId: id, cwd: chat.cwd, files, at: Date.now() }, repo: repo ? { ...repo, sessionId: id, ...keep } : null })
+}
+
+// One git op per repo at a time.
+const gitBusy = new Set<string>()
+
+/** A Git panel button: the repo comes from the chat's own folder, never from the page. */
+async function runGit(m: Extract<WebviewToExtensionMessage, { type: 'hub-git' }>): Promise<boolean | string> {
+  const chat = hub.get().chats.find(c => c.sessionId === m.sessionId)
+  const root = chat?.cwd && fs.existsSync(chat.cwd) ? await repoRoot(chat.cwd) : undefined
+  if (!root) return refuse('that chat\'s folder is not in a git repo')
+  if (gitBusy.has(root)) return refuse('another git command is still running in this repo')
+  gitBusy.add(root)
+  const mark = (patch: object) => { const r = hub.get().repo; if (r?.sessionId === m.sessionId) hub.set({ repo: { ...r, ...patch } }) }
+  mark({ busy: m.op })
+  try {
+    const { sessionId: _s, type: _t, ...cmd } = m
+    const r = await gitOp(root, cmd, await ghPath())
+    if (r.open) void vscode.env.openExternal(vscode.Uri.parse(r.open))
+    mark({ busy: undefined, result: { text: r.text, ok: r.ok, at: Date.now() } })
+    return r.ok || refuse(r.text)
+  } catch (err) {
+    mark({ busy: undefined, result: { text: (err as Error).message, ok: false, at: Date.now() } })
+    return refuse((err as Error).message)
+  } finally {
+    gitBusy.delete(root)
+    watched = m.sessionId
+    void refreshChanges().catch(err => log.warn('Changes failed:', err))
+    refreshHub()
+  }
 }
 
 /** Everything the Hub shows from Claude Code's settings; also run on refresh, so edits made elsewhere show up. */
@@ -471,6 +582,20 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       hub.queue(chat.sessionId, { kind: 'prompt', text })
       return true
     }
+    case 'hub-answer': {
+      const chat = hub.get().chats.find(c => c.sessionId === m.sessionId)
+      const ask = hub.get().progress.find(p => p.sessionId === m.sessionId)?.ask
+      if (!chat?.live || chat.ai === 'codex') return refuse('answer that chat in its terminal')
+      if (!ask || ask.id !== m.askId) return refuse('that prompt is already answered or gone')
+      const keys = askKeys(ask, m.choice)
+      if (typeof keys === 'string') return refuse(keys)
+      const claim = () => {
+        if (hub.get().progress.find(p => p.sessionId === chat.sessionId)?.ask?.id !== ask.id) return false
+        hub.answered(chat.sessionId, ask.id)
+        return true
+      }
+      return answerInTerminal(chat.pid, keys, claim).then(problem => (problem ? refuse(problem) : true))
+    }
     case 'hub-rc': {
       if (m.sessionId) {
         // The chat's rc command toggles, so a chat already in the asked state is left alone.
@@ -493,7 +618,7 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       // Starts the browser app (the vsix's copy, else the agent-flow checkout's) when it is not running, with --lan for Phone; phone only wants the QR link.
       void ensureWeb(path.join(REPO_ROOTS[0], 'agent-flow'), m.phone === true, { bundle: path.join(extensionPath, 'dist', 'app', 'app.js'), version: extensionVersion }).then(async r => {
         if ('problem' in r) return void refuse(r.problem)
-        hub.set({ webUrl: r.url, phoneUrl: await phoneUrl(r.url) })
+        hub.set({ webUrl: r.url, phoneUrls: await phoneUrls(r.url) })
         if (!m.phone) void vscode.env.openExternal(vscode.Uri.parse(r.url))
       })
       return true
@@ -539,11 +664,9 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       if (goal) void pickTools(goal).catch(err => log.warn('Tool pick failed:', err))
       return true
     }
-    case 'hub-chat-tools': {
-      let problem: string | undefined
-      try { problem = saveChatTools(m.sessionId, m.tools) } catch (err) { problem = `could not save the chat's tools (${(err as Error).message})` }
-      return problem ? refuse(problem) : true
-    }
+    case 'hub-chat-tools':
+      void saveChatTools(m.sessionId, m.tools).catch(err => `could not save the chat's tools (${(err as Error).message})`).then(problem => { if (problem) refuse(problem) })
+      return true
     case 'hub-focus-chat':
       focusChat(m.sessionId)
       return true
@@ -570,6 +693,8 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       watched = m.sessionId
       void refreshChanges().catch(err => log.warn('Changes failed:', err))
       return true
+    case 'hub-git':
+      return runGit(m)
     case 'hub-open-diff':
       void openDiff(m.sessionId, m.file).then(problem => { if (problem) refuse(problem) })
       return true
@@ -595,9 +720,15 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
     case 'hub-login-active':
     case 'hub-login-rename':
     case 'hub-login-delete':
-    case 'hub-login-app-delete': {
+    case 'hub-login-app-delete':
+    case 'hub-login-link': {
       let problem: string | undefined
       try { problem = loginCommand(m) } catch (err) { problem = `could not save the login (${(err as Error).message})` }
+      return problem ? refuse(problem) : true
+    }
+    case 'hub-browser': {
+      let problem: string | undefined
+      try { problem = browserCommand(m) } catch (err) { problem = `could not save the browser (${(err as Error).message})` }
       return problem ? refuse(problem) : true
     }
     case 'hub-kit-export': {
@@ -614,7 +745,7 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       return true
     }
     case 'hub-handoff':
-      hub.queue(m.sessionId, { kind: 'handoff' })
+      hub.handoffNow(m.sessionId)
       return true
     case 'hub-dev-start': {
       const row = devRequest(m.folder)
@@ -645,9 +776,44 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
         hub.set({ awake: m.on })
         return true
       })
+    case 'hub-device':
+      return answerDevice(m.id, m.allow)
     default:
       return false
   }
+}
+
+// Devices asking in through the browser app's sign-in page. Every window lists them in its panel;
+// the prompt shows in the focused window, or in the next one to get focus, so a background window stays quiet.
+const ASK_MS = 2 * 60_000
+const asking = new Map<string, DeviceAsk & { port: number; at: number; shown?: boolean }>()
+
+function listDevices(): void {
+  for (const [id, d] of asking) if (Date.now() - d.at >= ASK_MS) asking.delete(id)
+  hub.set({ devices: [...asking.values()].map(({ id, ip, ua, network }) => ({ id, ip, ua, network })) })
+}
+
+function promptDevices(): void {
+  if (!vscode.window.state.focused) return
+  listDevices()
+  for (const d of asking.values()) {
+    if (d.shown) continue
+    d.shown = true
+    void vscode.window.showInformationMessage(`A device wants to open Switchboard: ${d.ua} at ${d.ip} (${d.network})`, 'Allow', 'Deny')
+      .then(pick => { if (pick) void answerDevice(d.id, pick === 'Allow') })
+  }
+}
+
+/** Tells the browser app on loopback; it checks the token against the window files. */
+async function answerDevice(id: string, allow: boolean): Promise<boolean | string> {
+  const d = asking.get(id)
+  if (!d) return refuse('that device was already answered, or gave up')
+  asking.delete(id)
+  listDevices()
+  try {
+    const r = await fetch(`http://127.0.0.1:${d.port}/device/answer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, allow, token: hub.token }), signal: AbortSignal.timeout(3000) })
+    return r.ok || refuse(r.status === 409 ? 'that device was already answered, or gave up' : 'the browser app did not take the answer')
+  } catch { return refuse('the browser app is not answering') }
 }
 
 // Dev terminals this window started and the tailscale serve each got, by terminal name; turned off when either ends.

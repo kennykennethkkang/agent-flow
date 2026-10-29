@@ -14,6 +14,9 @@
  */
 
 import * as vscode from 'vscode'
+import * as os from 'os'
+import * as path from 'path'
+import * as fs from 'fs'
 import { HookServer } from './hook-server'
 import { SessionWatcher } from './session-watcher'
 import { VisualizerPanel } from './webview-provider'
@@ -23,11 +26,15 @@ import {
 } from './constants'
 import { migrateHttpHooks } from './hooks-config'
 import {
-  writeDiscoveryFile, removeDiscoveryFile, ensureHookScript,
+  writeDiscoveryFile, removeDiscoveryFile, ensureHookScript, hashWorkspace,
 } from './discovery'
 import { createLogger } from './logger'
 import { hub } from './hub/hub-service'
-import { notify } from './hub/notify'
+import { dailySummary, notify } from './hub/notify'
+import { newerVersion } from './hub/progress'
+import { checkAsked } from './hub/coverage'
+import { readWindows } from './hub/dev'
+import type { ChatProgress, ChatState } from './hub/types'
 import { wireWatcherToPanel } from './session-runtime'
 import type { AgentRuntime } from './session-runtime'
 
@@ -78,6 +85,7 @@ export async function startClaudeRuntime(
     if (workspace) {
       ensureHookScript()
       writeDiscoveryFile(hookPort, workspace)
+      hub.keepRetries(path.join(os.homedir(), '.claude', 'switchboard', `retries-${hashWorkspace(workspace)}.json`))
       migrateHttpHooks()
     }
   }
@@ -86,11 +94,18 @@ export async function startClaudeRuntime(
   const watcher = new SessionWatcher()
   context.subscriptions.push(watcher)
 
+  const summary = setInterval(() => dailySummary(), 10 * 60_000)
+  const reload = setInterval(() => reloadIfUpdated(context, context.extension.packageJSON.version as string), 60_000)
+  context.subscriptions.push({ dispose: () => { clearInterval(summary); clearInterval(reload) } })
+
   // Route hook events → panel, but filter out events the watcher already owns
   if (hookPort !== HOOK_SERVER_NOT_STARTED) {
-    hookServer.onRaw(payload => {
-      const change = hub.hook(payload)
-      if (change) notify(change)
+    hookServer.onRaw(({ payload, mirror }) => {
+      const change = hub.hook(payload, Date.now(), mirror)
+      if (!change) return
+      // A first Done waits for Jev's verdict on Kenneth's requests, so one notification says it all.
+      if (change.to.state === 'done' && change.from !== 'done' && change.to.asked?.length) void withCoverage(change)
+      else notify(change)
     })
     hookServer.onEvent((event) => {
       const panels = VisualizerPanel.ready()
@@ -152,4 +167,38 @@ export async function startClaudeRuntime(
   }
 
   return { mode: 'claude', watcher, connectionStatus, dispose }
+}
+
+/** Scores the chat's requests with Jev, shares them with every window, then notifies once. */
+async function withCoverage(change: { from?: ChatState; to: ChatProgress }): Promise<void> {
+  const p = change.to
+  const scores = await checkAsked(p).catch(() => undefined)
+  if (scores) {
+    const ev = { session_id: p.sessionId, cwd: p.cwd, hook_event_name: 'SwitchboardCovered', scores }
+    hub.hook(ev)
+    const body = JSON.stringify(ev)
+    for (const w of readWindows().filter(w => w.pid !== process.pid)) {
+      void fetch(`http://127.0.0.1:${w.port}/`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-switchboard-mirror': '1' }, body, signal: AbortSignal.timeout(2000) }).catch(() => undefined)
+    }
+  }
+  notify({ ...change, to: hub.get().progress.find(x => x.sessionId === p.sessionId) ?? p })
+}
+
+/** A newer Switchboard installed: reload this window once none of its own chats is mid-turn, so nothing in flight is lost. */
+function reloadIfUpdated(context: vscode.ExtensionContext, running: string): void {
+  const dir = path.join(os.homedir(), '.vscode', 'extensions')
+  let newest = running
+  try {
+    let obsolete: Record<string, unknown> = {}
+    try { obsolete = JSON.parse(fs.readFileSync(path.join(dir, '.obsolete'), 'utf8')) } catch { /* none */ }
+    for (const n of fs.readdirSync(dir)) {
+      const v = /^kennykennethkkang\.switchboard-(\d+\.\d+\.\d+)$/.exec(n)?.[1]
+      if (v && !obsolete[n] && newerVersion(v, newest)) newest = v
+    }
+  } catch { return }
+  // Once per version: a copy that will not load must not reload the window every minute.
+  if (newest === running || context.globalState.get('reloadedFor') === newest) return
+  const roots = (vscode.workspace.workspaceFolders ?? []).map(f => f.uri.fsPath)
+  const busy = hub.get().progress.some(p => p.state === 'working' && roots.some(r => p.cwd === r || p.cwd.startsWith(r + path.sep)))
+  if (!busy) void context.globalState.update('reloadedFor', newest).then(() => vscode.commands.executeCommand('workbench.action.reloadWindow'))
 }

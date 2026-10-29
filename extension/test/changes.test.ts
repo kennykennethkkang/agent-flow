@@ -10,7 +10,8 @@ import * as http from 'http'
 import * as os from 'os'
 import * as path from 'path'
 import { execFileSync } from 'child_process'
-import { ensureWeb, insideCwd, parseChanges, phoneUrl, readChanges, safeFile, servesLive, webUrl } from '../src/hub/local'
+import { phoneCode } from '../src/hub/lan'
+import { ensureWeb, insideCwd, parseChanges, phoneUrls, readChanges, safeFile, servesLive, webUrl } from '../src/hub/local'
 import { noteSnippet, searchNotes } from '../src/hub/chains'
 import { withSkipShell } from '../src/hub/controls'
 import type { ArchivedChat } from '../src/hub/types'
@@ -350,12 +351,30 @@ describe('browser link', () => {
     assert.deepEqual(r, { url: 'http://127.0.0.1:3131' })
     assert.deepEqual(stopped, [])
   })
-  it('gives the phone link only for the running app port', async () => {
-    const link = 'http://192.168.1.5:3131/?k=abc'
-    assert.equal(await phoneUrl('http://127.0.0.1:3131', async () => link), link)
-    assert.equal(await phoneUrl('http://127.0.0.1:3001', async () => link), null)
-    assert.equal(await phoneUrl(null, async () => link), null)
-    assert.equal(await phoneUrl('http://127.0.0.1:3131', async () => undefined), null)
+  it('gives a phone link per network, from the current addresses, only for the running --lan app', async () => {
+    const lan = async () => 'http://0.0.0.0:3131', secret = async () => 'abc'
+    const ips = () => ['100.101.2.3', '192.168.1.103'], none = () => ({})
+    const code = phoneCode('abc')
+    assert.match(code, /^\d{6}$/)
+    assert.deepEqual(await phoneUrls('http://127.0.0.1:3131', lan, secret, ips, none), { wifi: 'http://192.168.1.103:3131/?k=abc', tailscale: 'http://100.101.2.3:3131/?k=abc', code })
+    assert.deepEqual(await phoneUrls('http://127.0.0.1:3131', lan, secret, () => ['192.168.1.103'], none), { wifi: 'http://192.168.1.103:3131/?k=abc', code })
+    assert.deepEqual(await phoneUrls('http://127.0.0.1:3131', lan, secret, () => [], none), {})
+    assert.deepEqual(await phoneUrls('http://127.0.0.1:3131', lan, async () => undefined, ips, none), {})
+    assert.equal(await phoneUrls('http://127.0.0.1:3001', lan, secret, ips), null)
+    assert.equal(await phoneUrls(null, lan, secret, ips), null)
+    assert.equal(await phoneUrls('http://127.0.0.1:3131', async () => undefined, secret, ips), null)
+  })
+  it('adds the Mac names next to the addresses, which stay put when the IP changes', async () => {
+    const lan = async () => 'http://0.0.0.0:3131', secret = async () => 'abc', code = phoneCode('abc')
+    const ips = () => ['100.101.2.3', '192.168.1.103']
+    const names = () => ({ wifi: 'kennys-mbp.local', tailscale: 'kennys-mbp.tail1234.ts.net' })
+    assert.deepEqual(await phoneUrls('http://127.0.0.1:3131', lan, secret, ips, names), {
+      wifi: 'http://192.168.1.103:3131/?k=abc', tailscale: 'http://100.101.2.3:3131/?k=abc', code,
+      wifiName: 'http://kennys-mbp.local:3131/?k=abc', tailscaleName: 'http://kennys-mbp.tail1234.ts.net:3131/?k=abc',
+    })
+    // A name without its network's address is offered anyway: tailscale may be up before an address shows.
+    assert.deepEqual(await phoneUrls('http://127.0.0.1:3131', lan, secret, () => [], () => ({ wifi: 'kennys-mbp.local' })), { wifiName: 'http://kennys-mbp.local:3131/?k=abc', code })
+    assert.equal(await phoneUrls('http://127.0.0.1:3001', lan, secret, ips, names), null)
   })
   it('answers the app the browser can use: the announced one, then 3001, never the dev web or 3000', async () => {
     const up = new Set(['http://127.0.0.1:3001'])
