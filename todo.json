@@ -1,0 +1,13 @@
+{
+ "version": 1,
+ "todo": [],
+ "left": [
+  {
+   "id": "4323189c",
+   "text": "GitHub CLI: it isn't signed in, so the PR and CI cards stay hidden. Run `! gh auth login`.",
+   "at": 1793318325708,
+   "from": "fa3ccbf6-ea38-49a5-9088-2b820f6cd1ac"
+  }
+ ],
+ "removed": {}
+}
