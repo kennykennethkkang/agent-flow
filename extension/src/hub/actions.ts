@@ -39,6 +39,13 @@ const codexTerminals = new Map<string, vscode.Terminal>()
 const codexBorn = new WeakMap<vscode.Terminal, number>()
 let codexStarts: (CodexStart & { terminal: vscode.Terminal })[] = []
 const START_TTL_MS = 60 * 60 * 1000
+/** The first message in a temp file for newChatCommand's textFile; nothing for an empty one. */
+const messageFile = (text: string) => {
+  if (!text.trim()) return undefined
+  const file = path.join(os.tmpdir(), `switchboard-${crypto.randomUUID()}.txt`)
+  fs.writeFileSync(file, text.trim())
+  return file
+}
 const rowName = (first: string) => first.replace(/\s+/g, ' ').trim().slice(0, 60)
 const waitForCodex = (terminal: vscode.Terminal, cwd: string, name: string | undefined) => {
   if (name) codexStarts.push({ key: Math.random().toString(36).slice(2), cwd, name, at: Date.now(), terminal })
@@ -125,7 +132,7 @@ export async function newChat(folder: string, text: string | undefined, remote: 
     const sessionId = profile ? crypto.randomUUID() : undefined
     const settings = sessionId && profile ? saveProfile(sessionId, profile) : undefined
     if (sessionId && profile) setChatProfile(sessionId, profile)
-    command = newChatCommand({ text: withPointer(text ?? '', rulesState.ready.claude, rulesState.kit), name: title, remote: remote ? title : undefined, branch, sessionId, settings, system: settings ? TOOLS_NOTE : undefined }, SHELL)
+    command = newChatCommand({ textFile: messageFile(withPointer(text ?? '', rulesState.ready.claude, rulesState.kit)), name: title, remote: remote ? title : undefined, branch, sessionId, settings, system: settings ? TOOLS_NOTE : undefined }, SHELL)
   } catch (err) {
     return (err as Error).message
   }
@@ -307,7 +314,7 @@ export async function continueInFreshChat(h: Handoff, workspace: string | undefi
   let settings: string | undefined
   try { settings = freshId && carried ? saveProfile(freshId, carried) : undefined } catch { /* starts with the user's defaults */ }
   const tools = settings ? { sessionId: freshId, settings, system: TOOLS_NOTE } : {}
-  const claude = (branch?: string) => newChatCommand({ text, name: fresh, remote: hub.get().rc.atStartup ? fresh : undefined, branch, ...tools }, SHELL)
+  const claude = (branch?: string) => newChatCommand({ textFile: messageFile(text), name: fresh, remote: hub.get().rc.atStartup ? fresh : undefined, branch, ...tools }, SHELL)
   let command = ''
   try {
     // Codex has no --name and no hook to read the brief from: the brief rides in front, the name lives in the note.

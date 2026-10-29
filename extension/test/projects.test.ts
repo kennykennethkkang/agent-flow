@@ -40,6 +40,11 @@ describe('projects', () => {
     assert.throws(() => newChatCommand({ sessionId: 'x; rm -rf ~' }, 'posix'))
   })
 
+  it('reads a first message from its file, so a long one never overflows the terminal line', () => {
+    assert.equal(newChatCommand({ text: 'ignored', textFile: "/t/it's.txt" }, 'posix'), `claude "$(cat '/t/it'\\''s.txt')"`)
+    assert.equal(newChatCommand({ textFile: '/t/m.txt' }, 'powershell'), "claude (Get-Content -Raw '/t/m.txt')")
+  })
+
   it('doubles every single quote PowerShell reads as one, curly ones too', () => {
     assert.equal(newChatCommand({ text: 'it\u2019s \u2018x\u2019 \u201ay\u201b' }, 'powershell'), "claude 'it\u2019\u2019s \u2018\u2018x\u2019\u2019 \u201a\u201ay\u201b\u201b'")
   })

@@ -40,8 +40,10 @@ const BRANCH = /^(?!-)[^\s\x00-\x1f]+$/
 /**
  * `claude` with the first message, Remote Control under a name (the flag takes an
  * optional name, so without one it would swallow the message), after a new branch.
+ * textFile, when given, carries the message instead: a line typed into a starting shell
+ * is cut at 1024 bytes on macOS, which left long messages at a `quote>` prompt.
  */
-export function newChatCommand(o: { text?: string; remote?: string; branch?: string; name?: string; sessionId?: string; settings?: string; system?: string }, shell: 'posix' | 'powershell'): string {
+export function newChatCommand(o: { text?: string; textFile?: string; remote?: string; branch?: string; name?: string; sessionId?: string; settings?: string; system?: string }, shell: 'posix' | 'powershell'): string {
   const quote = (s: string) => {
     const one = s.replace(/\s+/g, ' ').trim()
     return shell === 'posix' ? `'${one.replace(/'/g, `'\\''`)}'` : `'${one.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`
@@ -55,7 +57,8 @@ export function newChatCommand(o: { text?: string; remote?: string; branch?: str
   if (o.settings) claude += ` --settings ${quote(o.settings)}`
   if (o.system) claude += ` --append-system-prompt ${quote(o.system)}`
   if (o.remote) claude += ` --remote-control ${quote(o.remote)}`
-  if (o.text?.trim()) claude += ` ${quote(o.text)}`
+  if (o.textFile) claude += shell === 'posix' ? ` "$(cat ${quote(o.textFile)})"` : ` (Get-Content -Raw ${quote(o.textFile)})`
+  else if (o.text?.trim()) claude += ` ${quote(o.text)}`
   if (o.branch === undefined) return claude
   if (!BRANCH.test(o.branch)) throw new Error(`Not a usable branch name: ${o.branch}`)
   const b = quote(o.branch)
