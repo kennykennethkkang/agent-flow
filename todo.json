@@ -5,6 +5,24 @@
    "id": "7ffd4fde",
    "text": "Create instructions on creating mod instructions taylored for your own use.",
    "at": 1793353577294
+  },
+  {
+   "id": "10828c87",
+   "text": "None of this reaches your live windows until you install this build and reload them. Chats that are already open keep the old instructions and the old tools.",
+   "at": 1793390994633,
+   "from": "a0ed070c-6c61-4f3f-a746-58fade7f0cea"
+  },
+  {
+   "id": "e8d631aa",
+   "text": "Your never-auto-enable plugin list is empty, so `tool_on` can turn on anything. If you add a plugin to that list later, `tool_on` will still turn it on.",
+   "at": 1793390994633,
+   "from": "a0ed070c-6c61-4f3f-a746-58fade7f0cea"
+  },
+  {
+   "id": "341c15d2",
+   "text": "The other chat's uncommitted script-file changes in `actions.ts` and `projects.ts` are still in the tree. I didn't touch them, and the message below doesn't cov",
+   "at": 1793390994633,
+   "from": "a0ed070c-6c61-4f3f-a746-58fade7f0cea"
   }
  ],
  "removed": {
