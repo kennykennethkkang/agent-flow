@@ -1,16 +1,10 @@
 {
  "version": 1,
- "todo": [
-  {
-   "id": "1690da63",
-   "text": "Reload VS Code yourself (Developer: Reload Window). That also restarts the phone app on 3131. I didn't do it from here because it could kill this chat.",
-   "at": 1793349145205,
-   "from": "b718000f-33f6-4cca-9248-d63589fd2902"
-  }
- ],
+ "todo": [],
  "removed": {
   "4323189c": 1793339057827,
-  "2af925c8": 1793349145205
+  "2af925c8": 1793349145205,
+  "1690da63": 1793349332652
  },
  "ticked": [
   {
