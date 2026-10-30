@@ -2,17 +2,13 @@
  "version": 1,
  "todo": [
   {
-   "id": "4323189c",
-   "text": "GitHub CLI: it isn't signed in, so the PR and CI cards stay hidden. Run `! gh auth login`.",
-   "at": 1793318325708,
-   "from": "fa3ccbf6-ea38-49a5-9088-2b820f6cd1ac"
-  },
-  {
    "id": "2af925c8",
    "text": "Commit agent-flow and claude-mods. In claude-mods the changes are `README.md`, `kit/agents/*`, `kit/kit.mjs`, `kit/kit.test.mjs`, `kit/rc-servers.mjs`, `kit/rul",
    "at": 1793337801322,
    "from": "7ef564d0-2fb7-4499-86fc-c075e2acbcbd"
   }
  ],
- "removed": {}
+ "removed": {
+  "4323189c": 1793339057827
+ }
 }
