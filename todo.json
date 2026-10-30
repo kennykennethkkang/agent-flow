@@ -11,6 +11,30 @@
    "text": "nothing open. Request your agent-flow chat again, since the earlier attempt never started.",
    "at": 1793365818947,
    "from": "b718000f-33f6-4cca-9248-d63589fd2902"
+  },
+  {
+   "id": "69fe2b40",
+   "text": "I haven't tried the window routing with two real VS Code windows. It's checked by reading the code and a test against a fake slow window.",
+   "at": 1793385879951,
+   "from": "a0ed070c-6c61-4f3f-a746-58fade7f0cea"
+  },
+  {
+   "id": "98f9fc01",
+   "text": "If an older Switchboard is open in another window, it may refuse forwarded commands and those chats won't start. Restarting that window fixes it.",
+   "at": 1793385879951,
+   "from": "a0ed070c-6c61-4f3f-a746-58fade7f0cea"
+  },
+  {
+   "id": "766528dd",
+   "text": "The quick answers from Switchboard's built-in assistant may come out a little shorter.",
+   "at": 1793385879951,
+   "from": "a0ed070c-6c61-4f3f-a746-58fade7f0cea"
+  },
+  {
+   "id": "95dec3fa",
+   "text": "The uncommitted script-file changes in `extension/src/hub/actions.ts`, `extension/src/hub/projects.ts` and `extension/test/projects.test.ts` are from another ch",
+   "at": 1793385879951,
+   "from": "a0ed070c-6c61-4f3f-a746-58fade7f0cea"
   }
  ],
  "removed": {
