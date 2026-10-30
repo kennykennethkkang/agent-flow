@@ -354,15 +354,17 @@ type WebDeps = {
   refresh?: boolean
   /** This extension's version; the copy records the one it came from. */
   version?: string
+  /** A same-version rebuild restarts the app too; off for a dev host, which would take turns with the installed build. */
+  rebuilds?: boolean
   command?: (pid: number) => Promise<string>
 }
 
 /** The app's address, started in the background from root first when it is not running. One start at a time.
- * phone starts it with --lan, restarting an app this extension started without it. Our app running an older
- * copy than the bundle is restarted, keeping --lan, so an update reaches the browser and the phone. */
+ * phone starts it with --lan, restarting an app this extension started without it. Our app running a copy that
+ * differs from a bundle no older than it is restarted, keeping --lan, so an update reaches the browser and the phone. */
 export function ensureWeb(root: string, phone = false, deps: WebDeps = {}): Promise<{ url: string } | { problem: string }> {
   const { find = () => webUrl(), start = spawnApp, stop = (pid: number) => process.kill(pid), lan = (w: string) => phoneUrls(w),
-    listeners = portListeners, pidFile = PID_FILE, tries = 25, waitMs = 200, bundle, stage = STAGE, refresh = false, version, command = (pid: number) => run('ps', ['-o', 'command=', '-p', String(pid)]) } = deps
+    listeners = portListeners, pidFile = PID_FILE, tries = 25, waitMs = 200, bundle, stage = STAGE, refresh = false, version, rebuilds = true, command = (pid: number) => run('ps', ['-o', 'command=', '-p', String(pid)]) } = deps
   const wait = async (done: () => Promise<boolean>) => {
     for (let i = 0; i < tries; i++) {
       await new Promise(r => setTimeout(r, waitMs))
@@ -394,7 +396,9 @@ export function ensureWeb(root: string, phone = false, deps: WebDeps = {}): Prom
     let restart: string | undefined
     const hasLan = !!running && !!(await lan(running))
     let stale = false
-    if (running && version && bundle && fs.existsSync(bundle) && newerVersion(version, stagedVersion(stage))) {
+    // Newer than the copy, or the same version reinstalled with rebuilt files.
+    const staged = stagedVersion(stage)
+    if (running && version && bundle && fs.existsSync(bundle) && (newerVersion(version, staged) || (rebuilds && staged === version))) {
       stale = !sameTree(path.dirname(bundle), stage)
       // Same app files: only the label moves on, no restart.
       if (!stale) try { fs.writeFileSync(`${stage}.version`, version) } catch { /* checked again next time */ }

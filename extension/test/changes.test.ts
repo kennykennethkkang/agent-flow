@@ -209,7 +209,7 @@ describe('browser link', () => {
     assert.deepEqual(lans, [false, true])
     assert.equal(fs.readFileSync(file, 'utf8'), '1234')
   })
-  it('restarts our app only for a newer version than its copy, keeping --lan; an older window, a hand-run app or a held lock leave it', async () => {
+  it('restarts our app for a newer version than its copy, keeping --lan; an older window, a hand-run app or a held lock leave it', async () => {
     const ext = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-ext-')), bundle = path.join(ext, 'dist', 'app', 'app.js')
     const stage = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sb-stage-')), 'app')
     fs.mkdirSync(path.dirname(bundle), { recursive: true })
@@ -228,8 +228,8 @@ describe('browser link', () => {
       lan: async () => 'http://100.1.2.3:3131/?k=x', listeners: async () => (up ? [listening] : []),
       bundle, stage, version, refresh, tries: 3, waitMs: 1, pidFile: file,
     })
-    await ensureWeb(appDir(), false, deps('0.1.0'))
-    assert.deepEqual(stopped, [], 'same version')
+    await ensureWeb(appDir(), false, deps('0.0.9'))
+    assert.deepEqual(stopped, [], 'older version')
     // Another window holds the restart.
     fs.writeFileSync(`${stage}.lock`, '1')
     await ensureWeb(appDir(), false, deps('0.2.0'))
@@ -248,6 +248,32 @@ describe('browser link', () => {
     fs.writeFileSync(file, '7')
     await ensureWeb(appDir(), false, deps('0.3.0'))
     assert.deepEqual(stopped, [42], 'not ours: left alone')
+  })
+  it('restarts our app when the same version is reinstalled with different app files, and leaves it when they match', async () => {
+    const ext = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-ext-')), bundle = path.join(ext, 'dist', 'app', 'app.js')
+    const stage = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sb-stage-')), 'app')
+    fs.mkdirSync(path.dirname(bundle), { recursive: true })
+    fs.mkdirSync(stage, { recursive: true })
+    fs.writeFileSync(bundle, 'rebuilt')
+    fs.writeFileSync(path.join(stage, 'app.js'), 'first build')
+    fs.writeFileSync(`${stage}.version`, '0.18.0')
+    const file = pidFile()
+    fs.writeFileSync(file, '42')
+    let up = true, listening = 42
+    const stopped: number[] = [], lans: boolean[] = []
+    const deps = { find: async () => (up ? 'http://127.0.0.1:3131' : null),
+      start: (_r: string, l: boolean) => { lans.push(l); up = true; listening = 43; return 43 },
+      stop: (pid: number) => { stopped.push(pid); up = false },
+      lan: async () => 'http://100.1.2.3:3131/?k=x', listeners: async () => (up ? [listening] : []),
+      bundle, stage, version: '0.18.0', refresh: true, tries: 3, waitMs: 1, pidFile: file }
+    await ensureWeb(appDir(), false, deps)
+    assert.deepEqual({ stopped, lans }, { stopped: [42], lans: [true] })
+    assert.equal(fs.readFileSync(path.join(stage, 'app.js'), 'utf8'), 'rebuilt')
+    await ensureWeb(appDir(), false, deps)
+    assert.deepEqual(stopped, [42], 'same files: left running')
+    fs.writeFileSync(bundle, 'dev host build')
+    await ensureWeb(appDir(), false, { ...deps, rebuilds: false })
+    assert.deepEqual(stopped, [42], 'a dev host never takes turns with the installed build')
   })
   it('a newer version with the same app files only records the version, and Phone waits on a held lock', async () => {
     const ext = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-ext-')), bundle = path.join(ext, 'dist', 'app', 'app.js')

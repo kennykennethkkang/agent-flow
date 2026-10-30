@@ -62,7 +62,7 @@ const statusLineCommand = () => (fs.existsSync(STATUS_LINE) ? `node "${STATUS_LI
 const posters = new Posters<ExtensionToWebviewMessage>()
 // Set in startHub; the bundled browser app lives under it.
 let extensionPath = ''
-let extensionVersion = ''
+let extensionVersion = '', installedBuild = true
 // Kept across windows and restarts: the fresh-chat branch choice and Switchboard's own switches.
 let store: vscode.Memento | undefined
 const KEEP_KEY = 'switchboard.keep'
@@ -141,8 +141,9 @@ export function startHub(context: vscode.ExtensionContext): void {
   rulesState.kit = path.join(context.extensionPath, 'kit')
   extensionPath = context.extensionPath
   extensionVersion = context.extension.packageJSON.version
+  installedBuild = context.extensionMode === vscode.ExtensionMode.Production
   // After an update, our running browser app still serves the old copy: restart it on the new one (never starts one).
-  void ensureWeb(path.join(REPO_ROOTS[0], 'agent-flow'), false, { bundle: path.join(extensionPath, 'dist', 'app', 'app.js'), version: context.extension.packageJSON.version, refresh: true })
+  void ensureWeb(path.join(REPO_ROOTS[0], 'agent-flow'), false, { bundle: path.join(extensionPath, 'dist', 'app', 'app.js'), version: context.extension.packageJSON.version, rebuilds: installedBuild, refresh: true })
   syncKit()
   setupAsk(context.extensionPath)
   syncLibrary(path.join(extensionPath, 'kit', 'design-md')).then(c => { if (c) log.info('Design library copied') }, err => log.warn(`Design library: could not copy (${(err as Error).message})`))
@@ -701,7 +702,7 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       return true
     case 'hub-web':
       // Starts the browser app (the vsix's copy, else the agent-flow checkout's) when it is not running, with --lan for Phone; phone only wants the QR link.
-      void ensureWeb(path.join(REPO_ROOTS[0], 'agent-flow'), m.phone === true, { bundle: path.join(extensionPath, 'dist', 'app', 'app.js'), version: extensionVersion }).then(async r => {
+      void ensureWeb(path.join(REPO_ROOTS[0], 'agent-flow'), m.phone === true, { bundle: path.join(extensionPath, 'dist', 'app', 'app.js'), version: extensionVersion, rebuilds: installedBuild }).then(async r => {
         if ('problem' in r) return void refuse(r.problem)
         hub.set({ webUrl: r.url, phoneUrls: await phoneUrls(r.url) })
         keepAccessNote()
