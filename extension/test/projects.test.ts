@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { chainBase, chainVersion, chatLabel, cloneTarget, codexNote, freshPrompt, handoffFile, labelNote, mergeProjects, newChatCommand, nextChainName, projectName, repoTop, stillRunning } from '../src/hub/projects'
+import { chainBase, chainVersion, chatLabel, cloneTarget, codexNote, freshPrompt, handoffFile, labelNote, mergeProjects, newChatCommand, nextChainName, projectName, repoTop, scriptBody, scriptLine, stillRunning } from '../src/hub/projects'
 
 describe('projectName', () => {
   it('names a folder by the git repo holding it, else its last part', () => {
@@ -49,6 +49,12 @@ describe('projects', () => {
     assert.equal(cloneTarget('../../etc'), undefined)
   })
 
+  it('types a short line that runs the command from a file, since a typed line past 1024 bytes is cut before the shell is ready', () => {
+    assert.equal(scriptLine("/var/folders/x/T/switchboard-1.sh", 'posix'), ". '/var/folders/x/T/switchboard-1.sh'")
+    assert.equal(scriptLine("C:\\Temp\\it's.ps1", 'powershell'), "iex (Get-Content -Raw 'C:\\Temp\\it''s.ps1')")
+    assert.equal(scriptBody('/t/a b.sh', 'claude', 'posix'), "rm -f -- '/t/a b.sh'\nclaude\n")
+    assert.equal(scriptBody('C:\\t\\a.ps1', 'claude', 'powershell'), "Remove-Item -LiteralPath 'C:\\t\\a.ps1' -ErrorAction SilentlyContinue\nclaude\n")
+  })
   it('builds the new chat command, quoting the first message for the shell', () => {
     assert.equal(newChatCommand({}, 'posix'), 'claude')
     // --remote-control takes an optional name, so the name always comes first or it would swallow the message.

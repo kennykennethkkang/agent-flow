@@ -3,7 +3,10 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import assert from 'node:assert/strict'
-import { awakeArgs, devCommand, devHome, devLink, devRows, knownDev, offArgs, serveArgs, servedPorts } from '../src/hub/dev'
+import * as http from 'http'
+import { awakeArgs, devCommand, devHome, devLink, devRows, knownDev, offArgs, postCommand, serveArgs, servedPorts } from '../src/hub/dev'
+import { HubService } from '../src/hub/hub-service'
+import { handleHub } from '../src/hub/routes'
 
 describe('dev button', () => {
   it('runs the dev script with the package manager its lockfile names', () => {
@@ -90,5 +93,42 @@ describe('keep awake', () => {
     assert.deepEqual(awakeArgs(4242), ['-dis', '-w', '4242'])
     // The extension host is a child of the VS Code app process.
     assert.deepEqual(awakeArgs(), ['-dis', '-w', String(process.ppid)])
+  })
+})
+
+describe('postCommand', () => {
+  it('counts a run, a refusal with a reason and a slow answer as taken, so the command never runs in two windows', async () => {
+    const h = new HubService()
+    const seen: string[] = []
+    let answer: boolean | string = true
+    h.runner = async c => { seen.push(c.type); if (answer === 'slow') await new Promise(r => setTimeout(r, 300)); return answer === 'slow' ? true : answer }
+    const server = http.createServer((req, res) => {
+      let body = ''
+      req.on('data', d => { body += d })
+      req.on('end', async () => {
+        const r = await handleHub(h, req.method, req.url, body)
+        res.writeHead(r?.status ?? 404).end(r?.body ?? '')
+      })
+    })
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
+    const port = (server.address() as { port: number }).port
+    const w = { pid: 1, port, hubToken: h.token, workspace: '/r/Armasu' }
+    const chat = { type: 'hub-new-chat', path: '/r/Armasu', remote: false }
+    try {
+      assert.equal(await postCommand(w, chat), true)
+      answer = 'that project has no to-do list here'
+      assert.equal(await postCommand(w, chat), true)
+      answer = false
+      assert.equal(await postCommand(w, chat), false)
+      answer = 'slow'
+      assert.equal(await postCommand(w, chat, 50), true)
+      assert.equal(await postCommand({ ...w, hubToken: 'no' }, chat), false)
+      assert.deepEqual(seen, ['hub-new-chat', 'hub-new-chat', 'hub-new-chat', 'hub-new-chat'])
+    } finally {
+      // A kept-alive socket would still answer after close.
+      server.closeAllConnections()
+      await new Promise(r => server.close(r))
+    }
+    assert.equal(await postCommand(w, chat), false)
   })
 })

@@ -16,7 +16,7 @@ import { quickAsk, withBrief } from './brain'
 import { rulesState, withPointer } from './rules'
 import { accountsNote, readLinks, readLogins } from './logins'
 import { awsBinary, chromeCall, profileFor, readPrefs, validProfileName, writeOpenChrome, writePrefs } from './aws'
-import { SHELL, chainBase, chainVersion, cloneTarget, freshPrompt, inWorkspace, labelNote, newChatCommand, nextChainName, projectName, stillRunning } from './projects'
+import { SHELL, chainBase, scriptBody, scriptLine, chainVersion, cloneTarget, freshPrompt, inWorkspace, labelNote, newChatCommand, nextChainName, projectName, stillRunning } from './projects'
 import { insideCwd, libraryInventory, projectContext, projectInventory, safeFile } from './local'
 import { matchCodexStarts, recordArchive, recordChain, type CodexStart } from './chains'
 import { RC_NAME, rcRunning, rcRunningNow, rcServerCommand } from './sessions'
@@ -50,6 +50,12 @@ const messageFile = (text: string) => {
   const file = path.join(os.tmpdir(), `switchboard-${crypto.randomUUID()}.txt`)
   fs.writeFileSync(file, text.trim())
   return file
+}
+// The full command goes in a file; only a short line is typed (scriptLine).
+const typed = (command: string) => {
+  const file = path.join(os.tmpdir(), `switchboard-${crypto.randomUUID()}.${SHELL === 'posix' ? 'sh' : 'ps1'}`)
+  fs.writeFileSync(file, scriptBody(file, command, SHELL))
+  return scriptLine(file, SHELL)
 }
 const rowName = (first: string) => first.replace(/\s+/g, ' ').trim().slice(0, 60)
 const waitForCodex = (terminal: vscode.Terminal, cwd: string, name: string | undefined) => {
@@ -145,7 +151,7 @@ export async function newChat(folder: string, text: string | undefined, remote: 
   }
   const t = vscode.window.createTerminal({ name: `${AIS[ai].name}: ${title}`, cwd: folder, env: chatEnv(folder) })
   t.show()
-  t.sendText(command)
+  t.sendText(typed(command))
   return undefined
 }
 
@@ -294,7 +300,7 @@ export async function resumeChat(sessionId: string, ai: AiId): Promise<string | 
   }
   const t = vscode.window.createTerminal({ name, cwd, env: chatEnv(cwd) })
   t.show()
-  t.sendText(AIS[ai].resumeCommand(sessionId, myName()))
+  t.sendText(typed(AIS[ai].resumeCommand(sessionId, myName())))
   return undefined
 }
 
@@ -370,7 +376,7 @@ export async function continueInFreshChat(h: Handoff, workspace: string | undefi
   }
   t.show()
   if (codex) waitForCodex(t, h.cwd, fresh)
-  else t.sendText(command)
+  else t.sendText(typed(command))
   // Only now that the fresh chat runs: the old chat moves to History and is closed once the fresh one posts.
   try {
     recordArchive({

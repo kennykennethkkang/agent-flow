@@ -139,7 +139,8 @@ export function askContext(state: HubState, cwd: string, gone: Server[], now = D
 }
 
 /** A throwaway call: no transcript saved, and no hooks, so it never shows up as a chat in Switchboard. */
-export const quickAskArgs = (prompt: string) => ['-p', '--no-session-persistence', '--settings', JSON.stringify({ disableAllHooks: true }), '--model', 'haiku', prompt]
+// No plugins, MCP servers, tools or default system prompt: a tool pick was 17 s with them, near PICK_MS, and fell back to everything on.
+export const quickAskArgs = (prompt: string) => ['-p', '--no-session-persistence', '--settings', JSON.stringify({ disableAllHooks: true }), '--setting-sources', '', '--strict-mcp-config', '--disable-slash-commands', '--tools', '', '--system-prompt', 'Answer exactly as the prompt asks.', '--model', 'haiku', prompt]
 
 /** One quick answer from Claude Code's Haiku on the subscription; rejects on error. */
 export function quickAsk(prompt: string, timeoutMs = ASK_TIMEOUT_MS): Promise<string> {

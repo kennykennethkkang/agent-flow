@@ -55,6 +55,14 @@ export const shellQuote = (s: string, shell: Shell) => {
   return shell === 'posix' ? `'${one.replace(/'/g, `'\\''`)}'` : `'${one.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`
 }
 
+/** Runs a command file. Typed text arrives before the shell's line editor is up, and the tty then cuts a line past 1024 bytes.
+ * PowerShell reads it through iex: the execution policy blocks a .ps1 on a stock desktop. */
+export const scriptLine = (file: string, shell: Shell) => shell === 'posix' ? `. ${shellQuote(file, shell)}` : `iex (Get-Content -Raw ${shellQuote(file, shell)})`
+
+/** The command file's text: it deletes itself first, since it holds the system prompt. */
+export const scriptBody = (file: string, command: string, shell: Shell) =>
+  `${shell === 'posix' ? `rm -f -- ${shellQuote(file, shell)}` : `Remove-Item -LiteralPath ${shellQuote(file, shell)} -ErrorAction SilentlyContinue`}\n${command}\n`
+
 /** A GitHub repo from owner/repo, its https URL or its ssh address; anything else is refused. */
 export function cloneTarget(input: string): { url: string; name: string } | undefined {
   const s = input.trim()

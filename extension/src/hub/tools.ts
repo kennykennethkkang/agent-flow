@@ -12,6 +12,8 @@ import * as os from 'os'
 import * as path from 'path'
 import { SHELL, shellQuote, type Shell } from './projects'
 import type { ChatProfile, Installed } from './types'
+import type { HubService } from './hub-service'
+import { libraryInventory, projectInventory } from './local'
 
 export const PROFILES = path.join(os.homedir(), '.claude', 'switchboard', 'chat-profiles')
 // A pick never turns these on; Kenneth can, per chat. Empty since auth0 and Stitch were audited; paid-guard asks before a Stitch upload.
@@ -23,7 +25,7 @@ export const PROMPT_MAX = 8000
 const DESC = 100
 const MAX_LIBRARY = 3
 /** Appended to a profiled chat's system prompt, so it asks instead of working around a missing tool. */
-export const TOOLS_NOTE = 'Switchboard started this chat with every plugin and skill on, minus those its goal does not need. If you need a plugin or skill that is off, say which one and why in one line instead of working around it. Never turn on a flagged plugin yourself.'
+export const TOOLS_NOTE = 'Switchboard started this chat with every plugin and skill on, minus those its goal does not need. You have full access to every installed plugin and skill. When you need one that is off, never ask: call the switchboard tool_on tool with its name and use it at once from the files it points to.'
 
 const short = (id: string) => id.split('@')[0]
 const plugins = (inv: Installed[]) => inv.filter(i => i.kind === 'plugin')
@@ -47,6 +49,17 @@ export function defaultProfile(inv: Installed[]): ChatProfile {
     skills: Object.fromEntries(skills(inv).map(s => [s.name, true])),
     ...assetMap(inv, a => !isLib(a)),
   }
+}
+
+// Tool-specific kits a failed pick still turns off unless the goal names them, the pick prompt's own rule.
+const NICHE = ['aws', 'bland', 'marketing', 'jev']
+const niche = (name: string, goal: string) => NICHE.some(k => short(name).includes(k) && !new RegExp(`\\b${k}`, 'i').test(goal))
+
+/** A pick that failed or was slow: the defaults minus the NICHE kits the goal does not name. */
+export function fallbackProfile(goal: string, inv: Installed[]): ChatProfile {
+  const d = defaultProfile(inv)
+  const off = (m: Record<string, boolean>) => Object.fromEntries(Object.entries(m).map(([k, on]) => [k, on && (ALWAYS.includes(short(k)) || !niche(k, goal))]))
+  return { ...d, plugins: off(d.plugins), skills: off(d.skills) }
 }
 
 /** A profile sent by the panel: only installed names, gaps from the defaults; a flagged plugin turned on by hand stays on, an ALWAYS one cannot be turned off. */
@@ -103,8 +116,8 @@ export function parsePick(answer: string, inv: Installed[]): ChatProfile | undef
 }
 
 /**
- * Same wait as titleFor; slow, failed or unreadable, the defaults, told to onFallback.
- * The defaults are the user's own settings, what a chat started outside Switchboard gets, so a failed pick never strips a needed plugin.
+ * Same wait as titleFor; slow, failed or unreadable, fallbackProfile, told to onFallback.
+ * That is the user's own settings minus only the kits the goal never names, so a failed pick never strips a needed plugin.
  */
 export async function pickProfile(goal: string, inv: Installed[], ask: (prompt: string, ms: number) => Promise<string>, ms = PICK_MS, onFallback: (why: string) => void = () => {}, context = ''): Promise<ChatProfile> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -115,7 +128,7 @@ export async function pickProfile(goal: string, inv: Installed[], ask: (prompt: 
   const picked = answer ? parsePick(answer, inv) : undefined
   if (picked) return picked
   onFallback(answer ? `unreadable answer: ${answer.slice(0, 80)}` : why)
-  return defaultProfile(inv)
+  return fallbackProfile(goal, inv)
 }
 
 /** A Switchboard chat's starting profile: the panel's, else a pick for the goal, else the defaults (no model call); none with nothing installed. */
@@ -206,4 +219,37 @@ export function resumeSettingsArg(id: string, dir = PROFILES, extra = '', shell:
   const append = [note === TOOLS_NOTE ? '' : note, extra].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
   const settings = has ? file : isNoRemote(id, dir) ? NO_REMOTE_ARG : undefined
   return `${settings ? ` --settings ${shellQuote(settings, shell)}` : ''}${append ? ` --append-system-prompt ${shellQuote(append, shell)}` : ''}`
+}
+
+/** A plugin (id or short name, either with :skill or :command) or a skill by name, on in the profile, and the file to read to use it now. */
+export function turnOn(p: ChatProfile, inv: Installed[], name: string, cwd?: string): { profile: ChatProfile; use: string } | undefined {
+  const n = name.trim().replace(/^\//, '')
+  const cut = n.indexOf(':'), plug = cut < 0 ? n : n.slice(0, cut), skill = cut < 0 ? '' : n.slice(cut + 1)
+  // The first file that exists; none found, the folder to look in.
+  const first = (paths: string[], dir: string) => paths.find(f => fs.existsSync(f)) ?? dir
+  const pl = plugins(inv).find(i => i.name === plug || short(i.name) === plug)
+  if (pl) {
+    const dir = pl.path
+    const use = !dir ? pl.name : skill ? first([path.join(dir, 'skills', skill, 'SKILL.md'), path.join(dir, 'commands', `${skill}.md`)], dir) : dir
+    return { profile: { ...p, plugins: { ...p.plugins, [pl.name]: true } }, use }
+  }
+  const sk = skills(inv).find(i => i.name === n)
+  if (!sk) return undefined
+  const roots = [...(sk.source === 'project' && cwd ? [path.join(cwd, '.claude', 'skills'), path.join(cwd, '.agents', 'skills')] : []), path.join(os.homedir(), '.claude', 'skills')]
+  return { profile: { ...p, skills: { ...p.skills, [sk.name]: true } }, use: first(roots.map(r => path.join(r, sk.name, 'SKILL.md')), roots[0]) }
+}
+
+/** The tool_on tool: on for the chat from now on, saved so a resume or fresh chat keeps it; answers a line for the chat. */
+export async function toolOn(hub: HubService, session: string, name: string): Promise<string> {
+  if (!ID.test(session)) throw new Error('this chat has no Switchboard session id')
+  const cwd = hub.get().chats.find(c => c.sessionId === session)?.cwd
+  // The same inventory the chat started with (chatInventory), or cleanProfile drops its design references.
+  const inv = [...hub.get().installed, ...(cwd ? await projectInventory(cwd).catch(() => []) : []), ...await libraryInventory()]
+  const on = turnOn(readProfiles([session])[session] ?? defaultProfile(inv), inv, name, cwd)
+  if (!on) throw new Error(`nothing installed is named ${name}`)
+  const profile = cleanProfile(on.profile, inv)
+  saveProfile(session, profile)
+  const tools = hub.get().tools
+  if (tools) hub.set({ tools: { ...tools, chats: { ...tools.chats, [session]: profile } } })
+  return `${name} is on for this chat. Use it now from ${on.use}. Its slash commands and MCP tools load when the chat next starts.`
 }

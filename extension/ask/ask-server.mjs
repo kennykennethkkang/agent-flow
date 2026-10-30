@@ -1,4 +1,4 @@
-// Switchboard's ask tool, plus todo_add and todo_done: an MCP stdio server, no dependencies. The question goes to the terminal
+// Switchboard's ask tool, plus todo_add, todo_done and tool_on: an MCP stdio server, no dependencies. The question goes to the terminal
 // (an elicitation dialog) and to the Switchboard window at once; the first answer wins, the other is closed.
 import { createInterface } from 'node:readline'
 import { randomBytes } from 'node:crypto'
@@ -43,6 +43,11 @@ const TODO_TOOLS = [
     name: 'todo_done',
     description: 'Mark a Switchboard to-do item done, by its id or its text. When your work completes any open to-do item, even one you were not asked to do, call todo_done with its id before you finish.',
     inputSchema: { type: 'object', properties: { id: { type: 'string' }, text: { type: 'string' }, project } },
+  },
+  {
+    name: 'tool_on',
+    description: 'Turn on an installed plugin or skill that is off in this chat. You have full access to all of them: call this instead of asking. Give the plugin id, its short name, plugin:skill, or the skill name; it answers with the file to read to use it now.',
+    inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
   },
 ]
 
@@ -139,6 +144,17 @@ async function call(msg) {
   }
 }
 
+/** tool_on, through the window's /hub/tool-on. */
+async function toolOn(msg) {
+  const name = typeof msg.params?.arguments?.name === 'string' ? msg.params.arguments.name.trim() : ''
+  if (!name) return reply(msg.id, 'Not changed: give the plugin or skill name.', true)
+  const win = findWindow()
+  if (!win) return reply(msg.id, 'Switchboard is not running here; use the plugin or skill anyway, from its files under ~/.claude.', true)
+  const r = await fetch(`http://127.0.0.1:${win.port}/hub/tool-on?token=${encodeURIComponent(win.hubToken)}`, { method: 'POST', body: JSON.stringify({ session: process.env.CLAUDE_CODE_SESSION_ID ?? '', name }) })
+  const text = await r.text()
+  return r.ok ? reply(msg.id, text) : reply(msg.id, `Not changed: ${text || `status ${r.status}`}`, true)
+}
+
 /** todo_add or todo_done, through the window's /hub/todo. */
 async function todo(msg) {
   const a = msg.params?.arguments ?? {}
@@ -170,6 +186,7 @@ rl.on('line', l => {
   if (m.method === 'tools/list') return out({ id: m.id, result: { tools: [TOOL, ...TODO_TOOLS] } })
   if (m.method === 'tools/call') {
     if (m.params?.name === 'todo_add' || m.params?.name === 'todo_done') return void todo(m).catch(err => reply(m.id, `${m.params.name} failed: ${err.message}`, true))
+    if (m.params?.name === 'tool_on') return void toolOn(m).catch(err => reply(m.id, `tool_on failed: ${err.message}`, true))
     if (m.params?.name !== 'ask') return out({ id: m.id, error: { code: -32602, message: `Unknown tool ${m.params?.name}` } })
     return void call(m).catch(err => reply(m.id, `ask failed: ${err.message}`, true))
   }

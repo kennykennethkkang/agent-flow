@@ -192,11 +192,11 @@ function addLeft(d: TodoDoc, p: ChatProgress, texts: string[], now: number): Tod
  * A chat ended (SessionEnd) without reaching Done: its standup Left lines join the to-do;
  * its items go back to not started. A handoff never comes here.
  */
-export function afterEnd(d: TodoDoc, p: ChatProgress, now = Date.now()): TodoDoc {
+export function afterEnd(d: TodoDoc, p: ChatProgress, now = Date.now(), add = leftTexts(p)): TodoDoc {
   if (p.state === 'done') return d
   let out = d
   for (const t of d.todo.filter(x => x.chat === p.sessionId)) out = startTodo(out, t.id, undefined, now)
-  return addLeft(out, p, leftTexts(p), now)
+  return addLeft(out, p, add, now)
 }
 
 const leftId = (chat: string, text: string) => crypto.createHash('sha1').update(`${chat}\n${text}`).digest('hex').slice(0, 8)
@@ -204,8 +204,9 @@ const leftId = (chat: string, text: string) => crypto.createHash('sha1').update(
 /**
  * A chat reached Done: the ids the model named are done; items it worked on are done unless its Left
  * mentions them (then open again, not started); its Left lines replace the ones it listed before.
+ * add: the Left lines laterOnly kept. Only adding goes by it, so a wrong filter answer never tombstones a line the chat still lists.
  */
-export function afterFinish(d: TodoDoc, p: ChatProgress, doneIds: string[], now = Date.now()): TodoDoc {
+export function afterFinish(d: TodoDoc, p: ChatProgress, doneIds: string[], now = Date.now(), add?: string[]): TodoDoc {
   const texts = leftTexts(p)
   const fresh = new Set(texts.map(t => leftId(p.sessionId, t)))
   // Only the model's guesses can be put back; the user's Done and the chat's own items cannot.
@@ -214,7 +215,7 @@ export function afterFinish(d: TodoDoc, p: ChatProgress, doneIds: string[], now 
   for (const id of doneIds) out = removeItem(out, id, now)
   for (const l of out.todo) if (l.from === p.sessionId && !l.chat && l.id === leftId(p.sessionId, l.text) && !fresh.has(l.id)) out = removeItem(out, l.id, now)
   for (const t of out.todo.filter(x => x.chat === p.sessionId)) out = texts.some(l => mentions(l, t.text)) ? startTodo(out, t.id, undefined, now) : removeItem(out, t.id, now)
-  return addLeft(out, p, texts, now)
+  return addLeft(out, p, add ?? texts, now)
 }
 
 /** The picked items with their open prerequisites first, each once, in list order. */
@@ -418,14 +419,48 @@ export async function replaceRemote(root: string, seen: string): Promise<string 
   return r.ok ? undefined : r.err.trim().split('\n')[0] || 'push failed'
 }
 
-/** A chat reached Done: one quick model call ticks the open items its work covers, wherever they came from, then afterFinish. */
+export function laterPrompt(lines: string[]): string {
+  return `A coding chat's standup listed these as left, numbered:\n${lines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\n`
+    + 'Keep only work for later: something still to build, fix, check, deploy or decide, by a later chat or by the user. '
+    + 'Drop lines that say nothing is open, report status, describe what was already done, or ask to retry or re-send a request. '
+    + 'Answer with the numbers to keep, comma separated, or "none".'
+}
+
+/** The numbers an answer names; undefined when it is neither numbers nor "none". */
+export function parseKept(answer: string, count: number): number[] | undefined {
+  if (/^\W*none\W*$/i.test(answer.trim())) return []
+  const ns = answer.match(/\d+/g)?.map(Number).filter(n => n >= 1 && n <= count)
+  return ns?.length ? [...new Set(ns)].map(n => n - 1) : undefined
+}
+
+/** The chat's Left lines that are later work. A failed or unreadable answer keeps them all. */
+export async function laterOnly(p: ChatProgress, ask: (prompt: string, ms: number) => Promise<string>): Promise<string[]> {
+  const left = leftTexts(p)
+  if (!left.length) return left
+  const kept = parseKept(await ask(laterPrompt(left), 60_000).catch(() => ''), left.length)
+  return kept ? kept.map(i => left[i]) : left
+}
+
+// The latest Done or resume per chat: a slower, older todoFinished must not write over a newer one.
+const turns = new Map<string, number>()
+const nextTurn = (id: string) => { const n = (turns.get(id) ?? 0) + 1; turns.set(id, n); return n }
+
+/** A chat reached Done: one quick model call ticks the open items its work covers, wherever they came from, another keeps only later work from its Left, then afterFinish. */
 export async function todoFinished(s: TodoStore, p: ChatProgress, ask: (prompt: string, ms: number) => Promise<string>): Promise<TodoDoc> {
+  const turn = nextTurn(p.sessionId)
   const left = leftTexts(p)
   const older = (await readDoc(s)).todo.filter(l => !l.chat && !left.some(t => mentions(t, l.text)))
   const said = !!(p.report?.done.length || p.asked?.length)
-  const answer = older.length && said ? await ask(finishPrompt(older, p), 60_000).catch(() => '') : ''
+  const [answer, later] = await Promise.all([older.length && said ? ask(finishPrompt(older, p), 60_000).catch(() => '') : '', laterOnly(p, ask)])
+  if (turns.get(p.sessionId) !== turn) return readDoc(s)
   const done = parseDoneIds(answer, older.map(l => l.id))
-  return updateDoc(s, d => afterFinish(d, p, done))
+  return updateDoc(s, d => afterFinish(d, p, done, Date.now(), later))
+}
+
+/** Kenneth wrote to a chat past Done: what its Left put on the list is that chat's work again, until its next Done says what is still left. */
+export function backInChat(d: TodoDoc, sessionId: string, now = Date.now()): TodoDoc {
+  const mine = d.todo.filter(l => l.from === sessionId && !l.chat && l.id === leftId(sessionId, l.text))
+  return mine.reduce((out, l) => startTodo(out, l.id, sessionId, now), d)
 }
 
 // The hub side: lists by project folder in hub.todos, synced at most every SYNC_MS and a few seconds after a change.
@@ -514,7 +549,17 @@ export async function chatFinished(p: ChatProgress): Promise<void> {
 /** claude-runtime.ts calls this when a chat this window owns ends without Done (hub.onEnded). */
 export async function chatEnded(p: ChatProgress): Promise<void> {
   if (p.state === 'done') return
-  await changeTodo(projectOf(p.cwd), d => afterEnd(d, p))
+  const later = await laterOnly(p, quickAsk)
+  await changeTodo(projectOf(p.cwd), d => afterEnd(d, p, Date.now(), later))
+}
+
+/** claude-runtime.ts calls this when a chat this window owns leaves Done. */
+export async function chatResumed(p: ChatProgress): Promise<void> {
+  nextTurn(p.sessionId)
+  const folder = projectOf(p.cwd)
+  // Most chats left nothing on the list: no write and no sync for those.
+  if (!hub.get().todos?.[folder]?.todo.some(l => l.from === p.sessionId && !l.chat)) return
+  await changeTodo(folder, d => backInChat(d, p.sessionId))
 }
 
 /** hub-todo-sync: the user's choice for a folder, then a sync at once. */

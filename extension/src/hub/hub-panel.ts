@@ -37,7 +37,7 @@ import { setRoleModel } from './roles'
 import { ghPath, gitOp, readRepo, repoRoot } from './git'
 import { addTodo, changeTodo, clearGoneChats, editTodo, finishItem, loadTodos, replaceRemoteTodo, restoreTicked, runMessage, runOrder, setTodoSync, startTodo, todoFolders } from './todo'
 import { randomUUID } from 'crypto'
-import { awakePid, devHome, devRows, knownDev, postWindow, readDev, readWindows, serve, setAwake, tailnet } from './dev'
+import { awakePid, devHome, devRows, knownDev, postCommand, postWindow, readDev, readWindows, serve, setAwake, tailnet } from './dev'
 
 const log = createLogger('Hub')
 // Off stops updates; the note stays.
@@ -522,6 +522,7 @@ async function runGit(m: Extract<WebviewToExtensionMessage, { type: 'hub-git' }>
 
 /** A to-do change, only for a project the panel lists; run starts a chat on the items or sends them to one. */
 async function todoCommand(m: Extract<WebviewToExtensionMessage, { type: `hub-todo-${string}` }>): Promise<boolean | string> {
+  if (m.type === 'hub-todo-run' && !m.to && await inHome(m.path, m)) return true
   const list = hub.get().todos?.[m.path]
   if (!list) return refuse('that project has no to-do list here')
   try {
@@ -744,7 +745,7 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
     }
     case 'hub-new-chat':
       // Naming the chat waits on a quick model call, so a refusal shows on the Mac but the route has already answered.
-      void newChat(m.path, m.text, m.remote, m.branch, m.ai, m.tools).then(problem => { if (problem) refuse(problem) })
+      void inHome(m.path, m).then(sent => { if (!sent) void newChat(m.path, m.text, m.remote, m.branch, m.ai, m.tools).then(problem => { if (problem) refuse(problem) }) })
       return true
     case 'hub-pick-tools': {
       const goal = m.text.trim().slice(0, 2000)
@@ -770,10 +771,13 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       return problem ? refuse(problem) : true
     }
     case 'hub-resume': {
-      return resumeChat(m.sessionId, m.ai).then(problem => {
+      const s = hub.get()
+      const cwd = [...s.chats, ...s.starred, ...s.archive].find(c => c.sessionId === m.sessionId)?.cwd
+      return inHome(cwd, m).then(sent => sent ? undefined : resumeChat(m.sessionId, m.ai)).then(problem => {
         if (problem) return refuse(problem)
-        // Back among the live chats: History stops hiding it.
-        if (removeArchive(m.sessionId)) hub.set({ archive: readArchive() })
+        // Back among the live chats: History stops hiding it. The home window may have done it already.
+        removeArchive(m.sessionId)
+        hub.set({ archive: readArchive() })
         return true
       })
     }
@@ -944,6 +948,15 @@ function runDev(row: { folder: string; project: string; command: string }): void
     refreshHub()
   }
   setTimeout(look, 2000)
+}
+
+/** A chat opens in the window that has its folder open, so each project's chats stay in its own window.
+ * False when that is this window, no window holds the folder, or it did not take the command. */
+const inHome = async (folder: string | undefined, m: { type: string }) => {
+  const home = folder ? devHome(readWindows(), folder, process.pid) : undefined
+  const sent = home ? await postCommand(home, m) : false
+  if (sent) vscode.window.setStatusBarMessage(`Switchboard: opened in the ${projectName(folder!)} window`, 5000)
+  return sent
 }
 
 /** The folder of a dev command a request names: only a listed project's. */

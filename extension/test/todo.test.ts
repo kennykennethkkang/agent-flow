@@ -8,7 +8,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { execFileSync } from 'child_process'
-import { addTodo, afterEnd, afterFinish, clearGone, editTodo, emptyDoc, finishPrompt, hostId, mergeDocs, moveChat, ownerRepo, parseDoneIds, readDoc, readOptIn, removeItem, setOptIn, startTodo, storeFor, syncDoc, syncMode, todoFinished, updateDoc, TODO_REF, remoteSeen, replaceRemote, runOrder, runMessage, toolStep, mentions, restoreTicked, projectOf, finishItem, parseDoc } from '../src/hub/todo'
+import { addTodo, afterEnd, afterFinish, backInChat, laterOnly, parseKept, clearGone, editTodo, emptyDoc, finishPrompt, hostId, mergeDocs, moveChat, ownerRepo, parseDoneIds, readDoc, readOptIn, removeItem, setOptIn, startTodo, storeFor, syncDoc, syncMode, todoFinished, updateDoc, TODO_REF, remoteSeen, replaceRemote, runOrder, runMessage, toolStep, mentions, restoreTicked, projectOf, finishItem, parseDoc } from '../src/hub/todo'
 import { commandProblem, handleHub } from '../src/hub/routes'
 import { git } from '../src/hub/git'
 import { HubService, hub } from '../src/hub/hub-service'
@@ -112,6 +112,39 @@ describe('todo finish', () => {
     // The same chat finishing again with a shorter Left list drops what it no longer lists.
     const again = afterFinish(d, chat({ report: { done: [], left: ['Deploy'] } }), [], 7)
     assert.deepEqual(again.todo.map(l => l.text), ['Deploy'])
+  })
+
+  it('keeps only the Left lines the model calls later work; a failed answer keeps them all', async () => {
+    assert.deepEqual(parseKept('1, 3', 3), [0, 2])
+    assert.deepEqual(parseKept('None.', 3), [])
+    assert.equal(parseKept('not sure', 3), undefined)
+    assert.deepEqual(parseKept('9', 3), undefined)
+    const p = chat({ report: { done: ['x'], left: ['Deploy to prod', 'nothing open. Request the chart again', 'Add rate limits'] } })
+    assert.deepEqual(await laterOnly(p, async () => '1,3'), ['Deploy to prod', 'Add rate limits'])
+    assert.deepEqual(await laterOnly(p, async () => 'none'), [])
+    assert.deepEqual(await laterOnly(p, async () => { throw new Error('x') }), p.report?.left)
+  })
+
+  it('a filter answer that drops a line the chat still lists never tombstones it', () => {
+    const p = chat({ report: { done: ['x'], left: ['Deploy to prod'] } })
+    const one = afterFinish(emptyDoc(), p, [], 1, ['Deploy to prod'])
+    const two = afterFinish(backInChat(one, 's1', 2), p, [], 3, [])
+    assert.deepEqual(two.todo.map(l => l.text), ['Deploy to prod'])
+    assert.deepEqual(two.removed, {})
+    // Dropped by the filter on its first Done: not added, and still free to be added later.
+    const skipped = afterFinish(emptyDoc(), p, [], 1, [])
+    assert.deepEqual(skipped.todo, [])
+    assert.deepEqual(afterFinish(skipped, p, [], 2, ['Deploy to prod']).todo.map(l => l.text), ['Deploy to prod'])
+  })
+
+  it('takes a chat\'s Left items back while Kenneth keeps working in it, and its next Done settles them', () => {
+    const p = chat({ report: { done: ['x'], left: ['Live test in two windows', 'Deploy'] } })
+    const d = addTodo(afterFinish(emptyDoc(), p, [], 1), 'Kenneth item', 1, 'k1')
+    const back = backInChat(d, 's1', 2)
+    assert.deepEqual(back.todo.map(l => [l.text, l.chat]), [['Live test in two windows', 's1'], ['Deploy', 's1'], ['Kenneth item', undefined]])
+    // It did the test; only Deploy is still left.
+    const next = afterFinish(back, chat({ report: { done: ['tested'], left: ['Deploy'] } }), [], 3)
+    assert.deepEqual(next.todo.map(l => [l.text, l.chat]), [['Deploy', undefined], ['Kenneth item', undefined]])
   })
 
   it('keeps an item a chat added with todo_add when that chat finishes', () => {
@@ -469,25 +502,37 @@ describe('todo storage', () => {
     await syncDoc(s)
   })
 
+  it('a slower, older Done of the same chat never writes over a newer one', async () => {
+    const s = await storeFor(fs.mkdtempSync(path.join(os.tmpdir(), 'race-')), fs.mkdtempSync(path.join(os.tmpdir(), 'race-files-')))
+    const slow = todoFinished(s, chat({ sessionId: 'r1', report: { done: ['a'], left: ['Old A'] } }), () => new Promise(r => setTimeout(() => r('1'), 100)))
+    await todoFinished(s, chat({ sessionId: 'r1', report: { done: ['b'], left: ['New B'] } }), async () => '1')
+    await slow
+    const d = await readDoc(s)
+    assert.deepEqual(d.todo.map(l => l.text), ['New B'])
+    assert.deepEqual(d.removed, {})
+  })
+
   it('a finished chat adds its Left items and the model ticks older ones', async () => {
     const s = await storeFor(plain, files)
-    await todoFinished(s, chat({ sessionId: 'c1', report: { done: [], left: ['Old thing'] } }), async () => 'none')
+    // The Left filter keeps every line here; its own tests are above.
+    const keep = (f: (q: string) => Promise<string>) => async (q: string) => q.startsWith("A coding chat's standup") ? '1, 2, 3, 4, 5' : f(q)
+    await todoFinished(s, chat({ sessionId: 'c1', report: { done: [], left: ['Old thing'] } }), keep(async () => 'none'))
     const id = (await readDoc(s)).todo.find(t => t.text === 'Old thing')!.id
     let asked = ''
-    await todoFinished(s, chat({ sessionId: 'c2', report: { done: ['Old thing done'], left: ['New thing'] } }), async q => { asked = q; return id })
+    await todoFinished(s, chat({ sessionId: 'c2', report: { done: ['Old thing done'], left: ['New thing'] } }), keep(async q => { asked = q; return id }))
     assert.match(asked, /Old thing/)
     assert.deepEqual((await readDoc(s)).todo.map(l => l.text), ['Plain', 'New thing'])
     // A failed model call removes nothing.
-    await todoFinished(s, chat({ sessionId: 'c3', report: { done: ['x'], left: [] } }), async () => { throw new Error('offline') })
+    await todoFinished(s, chat({ sessionId: 'c3', report: { done: ['x'], left: [] } }), keep(async () => { throw new Error('offline') }))
     assert.deepEqual((await readDoc(s)).todo.map(l => l.text), ['Plain', 'New thing'])
     // An item typed in by hand, or one this chat added itself, is ticked too; one in progress on a chat is not asked about.
     await updateDoc(s, d => startTodo(addTodo(addTodo(d, 'Mine', 2, 'm1', { from: 'c4' }), 'Busy', 2, 'b1'), 'b1', 'other', 3))
-    await todoFinished(s, chat({ sessionId: 'c4', report: { done: ['did it'], left: [] } }), async q => { asked = q; return 'p, m1, b1' })
+    await todoFinished(s, chat({ sessionId: 'c4', report: { done: ['did it'], left: [] } }), keep(async q => { asked = q; return 'p, m1, b1' }))
     assert.doesNotMatch(asked, /Busy/)
     assert.deepEqual((await readDoc(s)).todo.map(l => l.text), ['New thing', 'Busy'])
     // Finishing again with the same Left line keeps it, whatever the model says.
     asked = ''
-    await todoFinished(s, chat({ sessionId: 'c2', report: { done: ['part of it'], left: ['New thing'] } }), async q => { asked = q; return (await readDoc(s)).todo.map(l => l.id).join(',') })
+    await todoFinished(s, chat({ sessionId: 'c2', report: { done: ['part of it'], left: ['New thing'] } }), keep(async q => { asked = q; return (await readDoc(s)).todo.map(l => l.id).join(',') }))
     assert.doesNotMatch(asked, /New thing/)
     assert.deepEqual((await readDoc(s)).todo.map(l => l.text), ['New thing', 'Busy'])
   })

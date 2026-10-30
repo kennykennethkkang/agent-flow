@@ -511,7 +511,7 @@ export async function installed(claude = CLAUDE): Promise<Installed[]> {
   for (const p of await plugins(claude)) {
     const skills = p.dir ? await pluginNames(p.dir, p.manifest) : []
     const description = cut(p.manifest?.description)
-    out.push({ kind: p.id.endsWith('@kenneth-mods') ? 'mod' : 'plugin', name: p.id, enabled: p.on, source: p.id.split('@')[1], ...(skills.length ? { skills } : {}), ...(description ? { description } : {}) })
+    out.push({ kind: p.id.endsWith('@kenneth-mods') ? 'mod' : 'plugin', name: p.id, enabled: p.on, source: p.id.split('@')[1], ...(skills.length ? { skills } : {}), ...(description ? { description } : {}), ...(p.dir ? { path: p.dir } : {}) })
   }
   const list = (dir: string) => fs.promises.readdir(path.join(claude, dir)).catch(() => [] as string[])
   for (const [dir, enabled] of [['skills', true], ['skills-archive', false]] as const) {

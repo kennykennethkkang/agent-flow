@@ -4,7 +4,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import type { Installed } from '../src/hub/types'
-import { FLAGGED, chatSettings, cleanName, handoffSettings, isNoRemote, nameNote, cleanProfile, defaultProfile, startProfile, parsePick, pickProfile, pickPrompt, profileSettings, readProfiles, resumeSettingsArg, saveProfile, toolsNote, TOOLS_NOTE, PROMPT_MAX } from '../src/hub/tools'
+import { FLAGGED, chatSettings, cleanName, handoffSettings, isNoRemote, nameNote, cleanProfile, defaultProfile, fallbackProfile, startProfile, parsePick, pickProfile, pickPrompt, profileSettings, readProfiles, resumeSettingsArg, saveProfile, toolsNote, turnOn, TOOLS_NOTE, PROMPT_MAX } from '../src/hub/tools'
 
 const inv: Installed[] = [
   { kind: 'plugin', name: 'superpowers@superpowers-dev', enabled: true, description: 'TDD and plans' },
@@ -78,10 +78,21 @@ test('pickPrompt: names the goal and every choice, not mods or roles', () => {
   assert.match(s, /auth0@claude-plugins-official/)
 })
 
-test('pickProfile: the answer when it parses, defaults when it fails or is slow', async () => {
+test('pickProfile: the answer when it parses, the fallback when it fails or is slow', async () => {
   assert.equal((await pickProfile('x', inv, async () => '{"plugins":["bland"],"skills":[]}')).plugins['bland@bland'], false)
-  assert.deepEqual(await pickProfile('x', inv, async () => { throw new Error('x') }), defaultProfile(inv))
-  assert.deepEqual(await pickProfile('x', inv, () => new Promise(r => setTimeout(() => r('{"plugins":[],"skills":[]}'), 50)), 10), defaultProfile(inv))
+  assert.deepEqual(await pickProfile('x', inv, async () => { throw new Error('x') }), fallbackProfile('x', inv))
+  assert.deepEqual(await pickProfile('x', inv, () => new Promise(r => setTimeout(() => r('{"plugins":[],"skills":[]}'), 50)), 10), fallbackProfile('x', inv))
+})
+
+test('fallbackProfile: tool-specific kits off unless the goal names them, the rest as the defaults', () => {
+  const p = fallbackProfile('fix the window routing', inv)
+  assert.equal(p.plugins['bland@bland'], false)
+  assert.equal(p.plugins['marketing-skills@marketingskills'], false)
+  assert.equal(p.plugins['superpowers@superpowers-dev'], true)
+  assert.equal(p.plugins['auth0@claude-plugins-official'], true)
+  assert.deepEqual(p.skills, defaultProfile(inv).skills)
+  assert.equal(fallbackProfile('tune the Bland pathway', inv).plugins['bland@bland'], true)
+  assert.equal(fallbackProfile('write AWS cdk', inv).plugins['aws-core@claude-plugins-official'], true)
 })
 
 test('profileSettings: every plugin written out, only off skills overridden', () => {
@@ -354,4 +365,25 @@ test('resume quoting: hostile notes stay one argument in POSIX sh and PowerShell
     const ps = resumeSettingsArg(id, dir, n, 'powershell').replace(' --append-system-prompt ', '')
     assert.ok(psToken(ps), `${n} -> ${ps}`)
   }
+})
+
+test('turnOn: a plugin by id, short name or plugin:skill, or a skill, and the file to read now', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'turnon-'))
+  const plug = path.join(dir, 'bland'), proj = path.join(dir, 'proj')
+  fs.mkdirSync(path.join(plug, 'skills', 'calls'), { recursive: true })
+  fs.writeFileSync(path.join(plug, 'skills', 'calls', 'SKILL.md'), '')
+  fs.mkdirSync(path.join(plug, 'commands'), { recursive: true })
+  fs.writeFileSync(path.join(plug, 'commands', 'clone.md'), '')
+  fs.mkdirSync(path.join(proj, '.agents', 'skills', 'local-one'), { recursive: true })
+  fs.writeFileSync(path.join(proj, '.agents', 'skills', 'local-one', 'SKILL.md'), '')
+  const withDir: Installed[] = [...inv.map(i => i.name === 'bland@bland' ? { ...i, path: plug } : i), { kind: 'skill', name: 'local-one', enabled: true, source: 'project' }]
+  const off = { plugins: { 'bland@bland': false }, skills: { phone: false } }
+  assert.deepEqual(turnOn(off, withDir, 'bland'), { profile: { plugins: { 'bland@bland': true }, skills: { phone: false } }, use: plug })
+  assert.equal(turnOn(off, withDir, 'bland:calls')?.use, path.join(plug, 'skills', 'calls', 'SKILL.md'))
+  assert.equal(turnOn(off, withDir, 'bland@bland:clone')?.use, path.join(plug, 'commands', 'clone.md'))
+  // Not found where skills usually live: the plugin's folder to look in.
+  assert.equal(turnOn(off, withDir, 'bland:stitch::odd')?.use, plug)
+  assert.equal(turnOn(off, withDir, '/phone')?.profile.skills.phone, true)
+  assert.equal(turnOn(off, withDir, 'local-one', proj)?.use, path.join(proj, '.agents', 'skills', 'local-one', 'SKILL.md'))
+  assert.equal(turnOn(off, withDir, 'nope'), undefined)
 })

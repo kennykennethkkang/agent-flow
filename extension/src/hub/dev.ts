@@ -93,6 +93,14 @@ export async function postWindow(w: Win, body: Record<string, unknown>): Promise
   } catch { return false }
 }
 
+/** Runs a hub-* command in another window, as its panel would; false when it did not take it.
+ * A refusal with a reason was shown there, and a slow answer is still running there: both count as taken, or it would run twice. */
+export async function postCommand(w: Win, command: { type: string }, ms = 2000): Promise<boolean> {
+  try {
+    const r = await fetch(`http://127.0.0.1:${w.port}/hub/command?token=${encodeURIComponent(w.hubToken)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(command), signal: AbortSignal.timeout(ms) })
+    return r.ok || (r.status === 400 && !!(await r.text()))
+  } catch (err) { return (err as Error).name === 'TimeoutError' }
+}
 
 /** This Mac's tailnet name, whether it can serve https, and what it serves; null without tailscale or when it is down. */
 export async function tailnet(): Promise<Tailnet | null> {

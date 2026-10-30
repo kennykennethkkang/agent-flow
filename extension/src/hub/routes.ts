@@ -13,6 +13,7 @@
  * POST /hub/question       the ask tool's question {sessionId, id, questions}; GET ?id= holds 25 s for its answer (204: ask again, 410: gone);
  *      /hub/question/done  ?id=: answered in the terminal (token in the query)
  * POST /hub/todo    the ask server's todo_add or todo_done {op, cwd, text?, id?, before?, session?}; answers a line for the chat (token in the query)
+ * POST /hub/tool-on the ask server's tool_on {session, name}: a plugin or skill on for that chat; answers a line for it (token in the query)
  * Anything outside /hub answers undefined and stays with the hook handler.
  */
 import { askBrain, askContext, brief } from './brain'
@@ -24,6 +25,7 @@ import { ROLE_MODELS } from './roles'
 import { questionAsk } from './progress'
 import { closeQuestion, openQuestion, questionOf, waitQuestion } from './questions'
 import { todoTool, type TodoCall } from './todo'
+import { toolOn } from './tools'
 
 export type HubReply = { status: number; body: string; contentType?: string }
 
@@ -224,6 +226,14 @@ export function handleHub(hub: HubService, method: string | undefined, url: stri
       if (sessionId) hub.answered(sessionId, id)
       return { status: 204, body: '' }
     }
+  }
+
+  if (method === 'POST' && u.pathname === '/hub/tool-on') {
+    if (!hub.isToken(u.searchParams.get('token'))) return { status: 403, body: '' }
+    let b: unknown
+    try { b = JSON.parse(body) } catch { return { status: 400, body: '' } }
+    if (!obj(b) || typeof b.session !== 'string' || typeof b.name !== 'string' || !b.name.trim() || b.name.length > 200) return { status: 400, body: 'session and name only' }
+    return toolOn(hub, b.session, b.name).then(text, err => ({ status: 400, body: (err as Error).message }))
   }
 
   if (method === 'POST' && u.pathname === '/hub/todo') {
