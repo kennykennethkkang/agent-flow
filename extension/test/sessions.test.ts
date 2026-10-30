@@ -13,6 +13,14 @@ const NOW = 1_800_000_000_000
 const base = { pid: 1, sessionId: 's1', cwd: '/u/Armasu', status: 'idle', version: '2.1.310', kind: 'interactive', updatedAt: NOW - 60_000 }
 
 describe('chatRows', () => {
+  it('keeps one row per session, the running one, when a killed chat left its file behind', () => {
+    const rows = chatRows([{ ...base, pid: 7, updatedAt: NOW - 1000 }, { ...base, pid: 8, updatedAt: NOW - 5000 }], pid => pid === 8, NOW)
+    assert.deepEqual(rows.map(r => [r.pid, r.live]), [[8, true]])
+    const both = chatRows([{ ...base, pid: 7 }, { ...base, pid: 8 }], () => true, NOW)
+    assert.deepEqual(both.map(r => r.pid), [7, 8])
+    const gone = chatRows([{ ...base, pid: 7, updatedAt: NOW - 9000 }, { ...base, pid: 8, updatedAt: NOW - 1000 }], () => false, NOW)
+    assert.deepEqual(gone.map(r => r.pid), [8])
+  })
   it('links a connected chat and gives no reason', () => {
     const [row] = chatRows([{ ...base, bridgeSessionId: 'br_1' }], () => true, NOW)
     assert.equal(row.link, 'https://claude.ai/code/br_1')

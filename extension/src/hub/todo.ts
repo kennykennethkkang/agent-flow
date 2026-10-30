@@ -9,7 +9,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { execFile } from 'child_process'
 import { ghPath, git, repoRoot } from './git'
-import { cloneTarget } from './projects'
+import { cloneTarget, repoTop } from './projects'
 import { plainText } from './progress'
 import { writeJsonAtomic } from '../hook-entries'
 import { foldPathCase } from '../fs-utils'
@@ -59,7 +59,7 @@ export const emptyDoc = (): TodoDoc => ({ version: 1, todo: [], removed: {} })
 const clean = (text: string) => plainText(text).replace(/\s+/g, ' ').trim().slice(0, TEXT_MAX)
 
 /** Only well formed rows with plain ids survive; the remote's copy is anyone's. Bad JSON throws, so nothing writes over it. */
-function parseDoc(raw: string): TodoDoc {
+export function parseDoc(raw: string): TodoDoc {
   const j = JSON.parse(raw) as Record<string, unknown>
   const rows = <T>(v: unknown, extras: string[]) => (Array.isArray(v) ? v : []).flatMap(x => {
     const o = (x ?? {}) as Record<string, unknown>
@@ -72,7 +72,7 @@ function parseDoc(raw: string): TodoDoc {
   const todo = rows<TodoItem>(j?.todo, ['chat', 'host', 'from', 'before'])
   const ids = new Set(todo.map(t => t.id))
   const left = rows<TodoItem>(j?.left, ['from']).filter(l => !ids.has(l.id) && !Object.hasOwn(removed, l.id))
-  return withTicked({ version: 1, todo: [...todo, ...left], removed }, rows<TickedItem>(j?.ticked, ['by', 'from', 'before']).filter(t => t.by))
+  return withTicked({ version: 1, todo: [...todo, ...left], removed }, rows<TickedItem>(j?.ticked, ['by', 'from', 'before']))
 }
 
 /** d with ticked set to xs, newest first and capped; no field when empty. */
@@ -123,6 +123,13 @@ export function editTodo(d: TodoDoc, id: string, text: string, now = Date.now())
 export function removeItem(d: TodoDoc, id: string, now = Date.now()): TodoDoc {
   if (!okId(id)) return d
   return { ...d, todo: d.todo.filter(x => x.id !== id), removed: { ...d.removed, [id]: now } }
+}
+/** Done: off the list and into the finished archive; by is the chat that did it, none for the user. */
+export function finishItem(d: TodoDoc, id: string, by?: string, now = Date.now()): TodoDoc {
+  const t = d.todo.find(x => x.id === id)
+  if (!t) return d
+  const done: TickedItem = { id, text: t.text, at: now, ...(by ? { by } : {}), ...(t.from ? { from: t.from } : {}), ...(t.before ? { before: t.before } : {}) }
+  return removeItem(withTicked(d, [done, ...d.ticked ?? []]), id, now)
 }
 export function startTodo(d: TodoDoc, id: string, chat: string | undefined, now = Date.now()): TodoDoc {
   return { ...d, todo: d.todo.map(x => { if (x.id !== id) return x; const { chat: _c, host: _h, ...rest } = x; return { ...rest, at: now, ...(chat ? { chat, host: hostId() } : {}) } }) }
@@ -250,7 +257,7 @@ export type TodoCall = { op: 'add' | 'done'; text?: string; id?: string; before?
 export function toolStep(d: TodoDoc, c: TodoCall, now = Date.now(), id = ID()): { doc: TodoDoc; said: string } {
   if (c.op === 'done') {
     const t = findItem(d, c.id ?? c.text ?? '')
-    return { doc: removeItem(d, t.id, now), said: `Done: ${t.text}` }
+    return { doc: finishItem(d, t.id, c.session, now), said: `Done: ${t.text}` }
   }
   const text = clean(c.text ?? '')
   if (!text) throw new Error('text is empty')
@@ -446,8 +453,10 @@ async function syncNow(folder: string, s: TodoStore): Promise<void> {
   syncState.set(folder, why ? { ...mode, state: 'failing', why: why.slice(0, 120), ...(remote ? { remote } : {}) } : mode)
 }
 
-/** The listed project holding a folder (the longest), else the folder itself. */
+/** The git repo holding a folder, else the listed project holding it (the longest), else the folder itself. */
 export function projectOf(cwd: string): string {
+  const top = repoTop(cwd)
+  if (top) return top
   // Drive letters differ in case on Windows (c:\ from VS Code, C:\ from Claude Code).
   const c = foldPathCase(cwd)
   const inside = (p: string) => { const q = foldPathCase(p); return c === q || c.startsWith(q.endsWith(path.sep) ? q : q + path.sep) }

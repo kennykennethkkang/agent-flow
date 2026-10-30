@@ -3,8 +3,29 @@
  * accepts, and the command a new chat runs in its terminal. hub-panel.ts does
  * the opening, cloning and terminals.
  */
+import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
+import { upperDrive } from '../fs-utils'
 import type { Project } from './types'
+
+// ponytail: cached for the window's life, so a folder git-inited later keeps its old name until reload.
+const tops = new Map<string, string | undefined>()
+/** The git repo holding a folder (nearest .git dir or file), else undefined. Home never counts, so a dotfiles repo does not swallow everything. */
+export function repoTop(cwd: string): string | undefined {
+  if (tops.has(cwd)) return tops.get(cwd)
+  let top: string | undefined
+  const home = upperDrive(os.homedir())
+  for (let d = upperDrive(path.resolve(cwd)); d !== home; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.git'))) { top = d; break }
+    if (path.dirname(d) === d) break
+  }
+  tops.set(cwd, top)
+  return top
+}
+
+/** A chat's project: its repo's name, so agent-flow/extension reads agent-flow; else the folder's last part. */
+export const projectName = (cwd: string) => path.basename(repoTop(cwd) ?? cwd) || cwd
 
 export function mergeProjects(repos: string[], claudeDirs: string[], open?: string): Project[] {
   const seen = new Set<string>()

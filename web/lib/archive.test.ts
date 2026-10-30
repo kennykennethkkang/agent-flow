@@ -1,7 +1,7 @@
 /** History: closed chats grouped by origin, and kept out of the live list. */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { archiveChains, chatProjects, inProjects, filterChains, hideIdle, historyCount, liveChats, liveVersion, splitVersion } from './archive'
+import { archiveChains, chatProjects, inProjects, projectName, filterChains, hideIdle, historyCount, liveChats, liveVersion, splitVersion } from './archive'
 import { demoHub } from './hub-demo'
 import type { ArchivedChat } from './hub-types'
 
@@ -60,11 +60,16 @@ test('hides chats idle longer than the setting, never one that works, waits on y
 })
 
 test('lists the projects chats run in, most chats first, and filters by the picked ones', () => {
-  const cwds = ['/u/Armasu', '/u/agent-flow', '/u/Armasu/', '/u/claude-mods', '/u/agent-flow/extension']
-  assert.deepEqual(chatProjects(cwds, []), [{ name: 'Armasu', count: 2 }, { name: 'agent-flow', count: 1 }, { name: 'claude-mods', count: 1 }, { name: 'extension', count: 1 }])
+  const rows = ['/u/Armasu', '/u/agent-flow', '/u/Armasu/', '/u/claude-mods'].map(cwd => ({ cwd }))
+  // The extension names a repo subfolder's chat by its repo.
+  rows.push({ cwd: '/u/agent-flow/extension', project: 'agent-flow' } as never)
+  assert.deepEqual(chatProjects(rows, []), [{ name: 'agent-flow', count: 2 }, { name: 'Armasu', count: 2 }, { name: 'claude-mods', count: 1 }])
   // A picked project with no chat left stays listed, so it can be unpicked.
-  assert.deepEqual(chatProjects(['/u/Armasu'], ['Gone']), [{ name: 'Armasu', count: 1 }, { name: 'Gone', count: 0 }])
-  assert.equal(inProjects('/u/Armasu', []), true)
-  assert.equal(inProjects('/u/Armasu/', ['Armasu']), true)
-  assert.equal(inProjects('/u/agent-flow', ['Armasu']), false)
+  assert.deepEqual(chatProjects([{ cwd: '/u/Armasu' }], ['Gone']), [{ name: 'Armasu', count: 1 }, { name: 'Gone', count: 0 }])
+  assert.equal(inProjects({ cwd: '/u/Armasu' }, []), true)
+  assert.equal(inProjects({ cwd: '/u/Armasu/' }, ['Armasu']), true)
+  assert.equal(inProjects({ cwd: '/u/agent-flow' }, ['Armasu']), false)
+  assert.equal(inProjects({ cwd: '/u/agent-flow/extension', project: 'agent-flow' }, ['agent-flow']), true)
+  assert.equal(projectName({ cwd: '/u/agent-flow/extension', project: 'agent-flow' }), 'agent-flow')
+  assert.equal(projectName({ cwd: '/u/notes/' }), 'notes')
 })

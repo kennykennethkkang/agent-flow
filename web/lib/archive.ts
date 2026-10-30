@@ -31,18 +31,20 @@ export function hideIdle<T extends IdleCard>(cards: T[], minutes: number | null,
   })
 }
 
-// ponytail: a project is the chat folder's last name, so two repos with one name share a chip; key by full path if that happens.
-const projectOf = (cwd: string) => cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd
+type Placed = { cwd: string; project?: string }
+// ponytail: a folder outside git is named by its last part, so two such folders with one name share a chip; key by full path if that happens.
+/** The extension's repo name for a chat (agent-flow for agent-flow/extension), else the folder's last part. */
+export const projectName = (c: Placed) => c.project || c.cwd.split(/[\\/]/).filter(Boolean).pop() || c.cwd
 
 /** The projects chats run in, most chats first; a picked one with no chat left stays listed so it can be unpicked. */
-export function chatProjects(cwds: string[], picked: string[]): { name: string; count: number }[] {
+export function chatProjects(rows: Placed[], picked: string[]): { name: string; count: number }[] {
   const counts = new Map(picked.map(p => [p, 0]))
-  for (const cwd of cwds) counts.set(projectOf(cwd), (counts.get(projectOf(cwd)) ?? 0) + 1)
+  for (const r of rows) counts.set(projectName(r), (counts.get(projectName(r)) ?? 0) + 1)
   return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
 }
 
-/** Whether a chat folder is in the picked projects; none picked lets every chat through. */
-export const inProjects = (cwd: string, picked: string[]) => !picked.length || picked.includes(projectOf(cwd))
+/** Whether a chat is in the picked projects; none picked lets every chat through. */
+export const inProjects = (r: Placed, picked: string[]) => !picked.length || picked.includes(projectName(r))
 
 export type ArchiveChain = { origin: string; latest: ArchivedChat; versions: ArchivedChat[] }
 

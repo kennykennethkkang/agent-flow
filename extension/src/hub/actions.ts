@@ -16,7 +16,7 @@ import { quickAsk, withBrief } from './brain'
 import { rulesState, withPointer } from './rules'
 import { accountsNote, readLinks, readLogins } from './logins'
 import { awsBinary, chromeCall, profileFor, readPrefs, validProfileName, writeOpenChrome, writePrefs } from './aws'
-import { SHELL, chainBase, chainVersion, cloneTarget, freshPrompt, inWorkspace, labelNote, newChatCommand, nextChainName, stillRunning } from './projects'
+import { SHELL, chainBase, chainVersion, cloneTarget, freshPrompt, inWorkspace, labelNote, newChatCommand, nextChainName, projectName, stillRunning } from './projects'
 import { insideCwd, libraryInventory, projectContext, projectInventory, safeFile } from './local'
 import { matchCodexStarts, recordArchive, recordChain, type CodexStart } from './chains'
 import { RC_NAME, rcRunning, rcRunningNow, rcServerCommand } from './sessions'
@@ -284,7 +284,7 @@ export async function resumeChat(sessionId: string, ai: AiId): Promise<string | 
   const s = hub.get()
   const cwd = [...s.chats, ...s.starred, ...s.archive].find(c => c.sessionId === sessionId)?.cwd
   if (!cwd || !fs.existsSync(cwd)) return 'That chat\'s folder is gone'
-  const name = `${AIS[ai].name}: ${path.basename(cwd)}`
+  const name = `${AIS[ai].name}: ${projectName(cwd)}`
   if (ai === 'codex') {
     const t = await codexTerminal(name, cwd, ['resume', sessionId])
     if (typeof t === 'string') return t
@@ -321,7 +321,7 @@ export function headBranch(cwd: string): string | undefined {
  */
 export async function continueInFreshChat(h: Handoff, workspace: string | undefined): Promise<boolean> {
   if (!inWorkspace(h.cwd, workspace)) return false
-  const name = path.basename(h.cwd)
+  const name = projectName(h.cwd)
   const fresh = nextChainName(h.name, name, h.plan, h.task)
   const base = chainBase(fresh) ?? fresh
   const ai = h.ai ?? 'claude'

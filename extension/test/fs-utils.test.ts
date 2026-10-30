@@ -12,7 +12,15 @@ import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { readNewFileLines } from '../src/fs-utils'
+import { readNewFileLines, upperDrive } from '../src/fs-utils'
+
+describe('upperDrive', () => {
+  it('gives one spelling to c:\\ and C:\\, leaving other paths alone', () => {
+    assert.equal(upperDrive('c:\\u\\agent-flow'), 'C:\\u\\agent-flow')
+    assert.equal(upperDrive('C:\\u'), 'C:\\u')
+    assert.equal(upperDrive('/u/c:x'), '/u/c:x')
+  })
+})
 
 describe('readNewFileLines', () => {
   let dir: string

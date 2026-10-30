@@ -18,7 +18,7 @@ import { chatTerminal, closeChatTerminal, codexFiles, lastCodexPrompt, readAis, 
 import { dueForHandoff, fullCodex, idleHandedOff, readArchive, readChains, removeArchive, searchNotes } from './chains'
 import { newestNotes, readStarred, starredRows, toggleStar, writeStarred } from './starred'
 import { rcTargets, readChats } from './sessions'
-import { chainVersion, cloneTarget, codexNote, handoffFile, mergeProjects, planLabel } from './projects'
+import { chainVersion, cloneTarget, codexNote, handoffFile, mergeProjects, planLabel, projectName } from './projects'
 import { addAwsProfile, awsProfiles, deleteAwsProfile, makeDefault, parseAwsConfig, profileFor, readAwsConfig, readChrome, readLabels, readPrefs, validProfileName, writeAwsConfig, writeLabels, writeOpenChrome, writePrefs } from './aws'
 import { execFile } from 'child_process'
 import * as fs from 'fs'
@@ -35,7 +35,7 @@ import { kitHash, rulesState, syncRules, type SyncResult } from './rules'
 import { LOGINS, applyLink, applyLogin, loginFor, pruneLinks, readLinks, readLogins, writeLogins, type LinkCommand, type LoginCommand } from './logins'
 import { setRoleModel } from './roles'
 import { ghPath, gitOp, readRepo, repoRoot } from './git'
-import { addTodo, changeTodo, clearGoneChats, editTodo, loadTodos, removeItem, replaceRemoteTodo, restoreTicked, runMessage, runOrder, setTodoSync, startTodo, todoFolders } from './todo'
+import { addTodo, changeTodo, clearGoneChats, editTodo, finishItem, loadTodos, replaceRemoteTodo, restoreTicked, runMessage, runOrder, setTodoSync, startTodo, todoFolders } from './todo'
 import { randomUUID } from 'crypto'
 import { awakePid, devHome, devRows, knownDev, postWindow, readDev, readWindows, serve, setAwake, tailnet } from './dev'
 
@@ -207,6 +207,7 @@ export function startHub(context: vscode.ExtensionContext): void {
   // A handed-off Claude chat runs exit; its terminal's shell would stay behind, so close that too.
   // A session can run in two processes at once (the Claude panel and a terminal), so every live one is tried.
   const livePids = (id: string) => hub.get().chats.filter(c => c.sessionId === id && c.live && c.pid).map(c => c.pid)
+  hub.holds = async id => codexTied(id) || (await Promise.all(livePids(id).map(pid => chatTerminal(pid, vscode.window.terminals)))).some(Boolean)
   context.subscriptions.push(hub.onClosing(id => {
     for (const pid of livePids(id)) void closeChatTerminal(pid, vscode.window.terminals)
   }))
@@ -431,7 +432,7 @@ function browserCommand(m: Extract<WebviewToExtensionMessage, { type: 'hub-brows
 async function refreshChats(): Promise<void> {
   const { chats, ais } = await readAis()
   bindCodexTerminals(chats)
-  hub.set({ chats: chats.map(c => ({ ...c, takes: hub.takes(c, codexTied(c.sessionId)) })), ais })
+  hub.set({ chats: chats.map(c => ({ ...c, project: projectName(c.cwd), takes: hub.takes(c, codexTied(c.sessionId)) })), ais })
   void clearGoneChats().catch(err => log.warn('To-do lists failed:', err))
   for (const c of idleHandedOff(chats, closingCodex)) {
     closingCodex.delete(c.sessionId)
@@ -453,7 +454,7 @@ async function codexHandoffs(chats: ChatRow[]): Promise<void> {
     codexBusySince.delete(c.sessionId)
     handedOff.add(c.sessionId)
     void store?.update(HANDED_KEY, [...handedOff].slice(-200))
-    const project = path.basename(c.cwd)
+    const project = projectName(c.cwd)
     const plan = await newestPlanFile(c.cwd)
     const file = codexFiles.get(c.sessionId)
     const prompt = file ? lastCodexPrompt(await rolloutLines(file)) : undefined
@@ -525,7 +526,7 @@ async function todoCommand(m: Extract<WebviewToExtensionMessage, { type: `hub-to
   try {
     if (m.type === 'hub-todo-add') await changeTodo(m.path, d => addTodo(d, m.text))
     else if (m.type === 'hub-todo-edit') await changeTodo(m.path, d => editTodo(d, m.id, m.text))
-    else if (m.type === 'hub-todo-remove') await changeTodo(m.path, d => removeItem(d, m.id))
+    else if (m.type === 'hub-todo-remove') await changeTodo(m.path, d => finishItem(d, m.id))
     else if (m.type === 'hub-todo-restore') await changeTodo(m.path, d => restoreTicked(d, m.id))
     else if (m.type === 'hub-todo-sync') await setTodoSync(m.path, m.on)
     else if (m.type === 'hub-todo-replace') {

@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { allowed, codeLogin, deniedAs, deviceAsks, lanCookie, lanFor, lanGate, lanHosts, commandFolder, liveToken, localName, phoneCode, phoneSecret, pickWindow, proxyHub, signInPage, tailscaleName, uaSummary, waitPage } from './hub-proxy'
+import { allowed, codeLogin, commandSession, deniedAs, deviceAsks, lanCookie, lanFor, lanGate, lanHosts, commandFolder, liveToken, localName, phoneCode, phoneSecret, pickWindow, proxyHub, signInPage, tailscaleName, uaSummary, waitPage } from './hub-proxy'
 import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as http from 'http'
@@ -52,6 +52,16 @@ describe('pickWindow', () => {
   })
   it('skips files without a port or token', () => {
     assert.equal(pickWindow([{ workspace: '/u', mtimeMs: 9 } as never, w('/u', 1, 4)], '/x')?.port, 4)
+  })
+})
+
+describe('commandSession', () => {
+  it('reads the chat a command names, nothing else', () => {
+    assert.equal(commandSession('{"type":"hub-send","sessionId":"ab-12","text":"x"}'), 'ab-12')
+    assert.equal(commandSession('{"type":"hub-focus-chat","sessionId":"ab-12"}'), 'ab-12')
+    assert.equal(commandSession('{"type":"hub-todo-add","path":"/p","text":"x"}'), undefined)
+    assert.equal(commandSession('{"type":"hub-send","sessionId":"../x?y"}'), undefined)
+    assert.equal(commandSession('not json'), undefined)
   })
 })
 
@@ -371,7 +381,8 @@ describe('proxyHub to-do', () => {
     let body = ''
     for await (const c of req) body += c
     hops.push({ method: req.method, url: req.url, body })
-    if (req.url?.startsWith('/hub/state')) res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ chats: [], todos, ...(stamp ? { stamp } : {}) }))
+    if (req.url?.startsWith('/hub/holds')) res.writeHead(404).end()
+    else if (req.url?.startsWith('/hub/state')) res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ chats: [], todos, ...(stamp ? { stamp } : {}) }))
     else res.writeHead(204).end()
   })
   const lan = { host: '192.168.1.5', secret: 's', names: ['mac.tail1.ts.net'] }
@@ -381,6 +392,7 @@ describe('proxyHub to-do', () => {
   const up2 = http.createServer(async (req, res) => {
     let body = ''
     for await (const c of req) body += c
+    if (req.url?.startsWith('/hub/holds')) { res.writeHead(req.url.includes('session=s2&') ? 204 : 404).end(); return }
     other.push(`${req.url} ${body}`)
     res.writeHead(204).end()
   })
@@ -444,6 +456,18 @@ describe('proxyHub to-do', () => {
       hops.length = 0; other.length = 0
       assert.equal((await call(host, 'POST', '/hub/command', run)).status, 204, host)
       assert.deepEqual([hops.length, other], [0, [`/hub/command?token=tok2 ${run}`]], host)
+    }
+  })
+
+  it('sends a chat command to the window holding that chat, else the usual window', async () => {
+    const send = (id: string) => JSON.stringify({ type: 'hub-send', sessionId: id, text: 'hi' })
+    for (const host of hosts()) {
+      hops.length = 0; other.length = 0
+      assert.equal((await call(host, 'POST', '/hub/command', send('s2'))).status, 204, host)
+      assert.deepEqual([hops.filter(h => h.url?.startsWith('/hub/command')).length, other], [0, [`/hub/command?token=tok2 ${send('s2')}`]], host)
+      hops.length = 0; other.length = 0
+      assert.equal((await call(host, 'POST', '/hub/command', send('s9'))).status, 204, host)
+      assert.deepEqual([hops.filter(h => h.url?.startsWith('/hub/command')).map(h => h.body), other], [[send('s9')], []], host)
     }
   })
 

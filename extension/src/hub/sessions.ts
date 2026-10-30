@@ -24,12 +24,18 @@ export function newer(a: string, b: string): boolean {
 }
 
 export function chatRows(files: Record<string, unknown>[], alive: (pid: number) => boolean, now = Date.now()): ChatRow[] {
-  const rows = files.flatMap(f => {
+  const all = files.flatMap(f => {
     const pid = f.pid, sessionId = str(f.sessionId)
     if (typeof pid !== 'number' || !sessionId) return []
     const updatedAt = typeof f.updatedAt === 'number' ? f.updatedAt : undefined
     return [{ pid, sessionId, name: str(f.name), cwd: str(f.cwd) ?? '', status: str(f.status), version: str(f.version), kind: str(f.kind), updatedAt, bridgeId: str(f.bridgeSessionId), live: alive(pid) }]
   })
+  // A killed chat that was resumed leaves its old file: dead rows drop when the session runs elsewhere, else the newest stays.
+  // Several live rows are real (the Claude panel and a terminal), so they all stay.
+  const running = new Set(all.filter(r => r.live).map(r => r.sessionId))
+  const dead = new Map<string, (typeof all)[number]>()
+  for (const r of all) if (!r.live && !running.has(r.sessionId) && (r.updatedAt ?? 0) >= (dead.get(r.sessionId)?.updatedAt ?? -1)) dead.set(r.sessionId, r)
+  const rows = all.filter(r => r.live || dead.get(r.sessionId) === r)
   const newest = rows.map(r => r.version).filter((v): v is string => !!v).reduce<string | undefined>((m, v) => (!m || newer(v, m) ? v : m), undefined)
   return rows.map(r => {
     const why: string[] = []

@@ -4,7 +4,31 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { chainBase, chainVersion, chatLabel, cloneTarget, codexNote, freshPrompt, handoffFile, labelNote, mergeProjects, newChatCommand, nextChainName, stillRunning } from '../src/hub/projects'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import { chainBase, chainVersion, chatLabel, cloneTarget, codexNote, freshPrompt, handoffFile, labelNote, mergeProjects, newChatCommand, nextChainName, projectName, repoTop, stillRunning } from '../src/hub/projects'
+
+describe('projectName', () => {
+  it('names a folder by the git repo holding it, else its last part', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-repo-'))
+    try {
+      fs.mkdirSync(path.join(tmp, 'agent-flow', '.git'), { recursive: true })
+      fs.mkdirSync(path.join(tmp, 'agent-flow', 'extension', 'src'), { recursive: true })
+      // A worktree or submodule has a .git file.
+      fs.mkdirSync(path.join(tmp, 'wt', 'app'), { recursive: true })
+      fs.writeFileSync(path.join(tmp, 'wt', '.git'), 'gitdir: /x')
+      fs.mkdirSync(path.join(tmp, 'plain'))
+      assert.equal(projectName(path.join(tmp, 'agent-flow', 'extension')), 'agent-flow')
+      assert.equal(projectName(path.join(tmp, 'agent-flow', 'extension', 'src')), 'agent-flow')
+      assert.equal(repoTop(path.join(tmp, 'agent-flow', 'extension')), path.join(tmp, 'agent-flow'))
+      assert.equal(projectName(path.join(tmp, 'wt', 'app')), 'wt')
+      assert.equal(projectName(path.join(tmp, 'plain')), 'plain')
+      assert.equal(repoTop(path.join(tmp, 'plain')), undefined)
+      assert.equal(projectName('/gone/folder/'), 'folder')
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
+  })
+})
 
 describe('projects', () => {
   it('lists repos and Claude Code projects once each, the open one marked', () => {

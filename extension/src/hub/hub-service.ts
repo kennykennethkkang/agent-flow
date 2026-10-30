@@ -107,6 +107,8 @@ export class HubService {
   readonly onPrompted = this.promptedChat.event
   /** handleHubMessage, set by startHub; kept as a field so routes.ts needs no vscode. A string is why it was refused. */
   runner?: (c: { type: string }) => boolean | string | Promise<boolean | string>
+  /** Whether this window holds the chat's terminal; hub-panel.ts sets it. */
+  holds?: (sessionId: string) => Promise<boolean>
   /** A device asking in (or its end, done), from the standalone app; set by startHub. */
   onDevice?: (d: DeviceAsk & { port: number } | { id: string; done: true }) => void
   /** When the standalone app last read /hub/state; hub-panel.ts keeps chats fresh while it is recent. */

@@ -1,11 +1,12 @@
 /**
  * The brain: what every live chat is doing, grouped by project, the four rules
- * that suggest a step, the brief a new chat reads, and Ask. Pure but for askBrain.
+ * that suggest a step, the brief a new chat reads, and Ask. Pure but for askBrain and the .git lookup.
  * hub-service.ts recomputes board and suggest on each change; routes.ts serves
  * brief and ask, each told only about the asking chat's own project.
  */
 import { execFile } from 'child_process'
 import * as path from 'path'
+import { repoTop } from './projects'
 import type { BoardProject, HubState, Server, SessionLive, Suggestion } from './types'
 
 const CLASH_MS = 60 * 60 * 1000
@@ -29,8 +30,10 @@ const SECRETS: RegExp[] = [
 ]
 export const redact = (text: string) => SECRETS.reduce((s, re) => s.replace(re, '[removed]'), text)
 
-/** The project a folder belongs to: the longest listed project holding it, else its last part. */
+/** The project a folder belongs to: its git repo, else the longest listed project holding it, else its last part. */
 function projectOf(state: HubState, cwd: string): { project: string; cwd: string } {
+  const top = repoTop(cwd)
+  if (top) return { project: path.basename(top), cwd: norm(top) }
   const p = state.projects.filter(x => inside(cwd, x.path)).sort((a, b) => b.path.length - a.path.length)[0]
   return p ? { project: p.name, cwd: norm(p.path) } : { project: path.basename(norm(cwd)) || cwd, cwd: norm(cwd) }
 }

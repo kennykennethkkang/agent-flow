@@ -30,7 +30,7 @@ export type PlanView = { name: string; tasks: { title: string; done: number; tot
 /** folder: the cwd's last two names, for show; cwd: the full one. */
 export type Server = { pid: number; command: string; port: number; folder: string; cwd?: string }
 /** A project folder with a dev script. Running when port is set; link is its tailscale serve address, when served. */
-export type DevProject = { folder: string; project: string; command: string; port?: number; link?: string }
+export type DevProject = { folder: string; project: string; /** projectName(folder), for the project filter; project stays the terminal's key. */ repo: string; command: string; port?: number; link?: string }
 export type GitState = { branch?: string; ahead?: number; behind?: number; changed: number; staged: number; untracked: number }
 export type AwsStatus = 'signed-in' | 'expired' | 'never'
 /** One ~/.aws/config profile. label: from aws-labels.json, by account. chrome: the Chrome profile folder its sign-in opens in ('' = system browser). stale: an old default's backup. */
@@ -152,7 +152,7 @@ export type BoardProject = { project: string; cwd: string; chats: BoardChat[] }
 export type Suggestion = { id: string; kind: 'clash' | 'full' | 'task' | 'server'; text: string; sessions: string[]; folder?: string; task?: string }
 export type Project = { name: string; path: string; kind: 'repo' | 'project'; isOpen: boolean }
 /** One running chat, and why it may be missing from the Claude app. fill: a Codex chat's context, 0..1. chain: the handoff chain it is in. takes: the message box reaches it. */
-export type ChatRow = { pid: number; sessionId: string; name?: string; cwd: string; status?: string; version?: string; kind?: string; updatedAt?: number; bridgeId?: string; link: string; live: boolean; why: string[]; ai?: AiId; fill?: number; chain?: string; takes?: boolean }
+export type ChatRow = { pid: number; sessionId: string; name?: string; cwd: string; status?: string; version?: string; kind?: string; updatedAt?: number; bridgeId?: string; link: string; live: boolean; why: string[]; ai?: AiId; fill?: number; chain?: string; takes?: boolean; /** The repo's name (projectName), so a chat in agent-flow/extension reads agent-flow. */ project?: string }
 /** The AIs the hub knows; a new one is one member here and one entry in ais.ts. */
 export type AiId = 'claude' | 'codex'
 export type AiStatus = { id: AiId; name: string; installed: boolean; detail?: string; chats: number }
@@ -180,8 +180,8 @@ export type Report = { done: string[]; left: string[] }
 export type TodoItem = { id: string; text: string; at: number; chat?: string; /** The machine that started chat. */ host?: string; from?: string; before?: string }
 /** How a project's lists sync: synced (private repo or opted in), local only (why), or failing (the last error). canSync: a git repo with an origin. remote: the unreadable remote list's commit, which Replace leases on. */
 export type TodoSync = { state: 'synced' | 'local' | 'failing'; why?: string; canSync?: boolean; optIn?: boolean; remote?: string }
-/** An item a finished chat's quick model call ticked off (by: that chat), kept so the user can put it back. */
-export type TickedItem = Pick<TodoItem, 'id' | 'text' | 'at' | 'from' | 'before'> & { by: string }
+/** A finished item (by: the chat that finished it, none when the user did), kept so the user can put it back. */
+export type TickedItem = Pick<TodoItem, 'id' | 'text' | 'at' | 'from' | 'before'> & { by?: string }
 export type TodoList = { todo: TodoItem[]; sync?: TodoSync; /** Newest first, at most 10. */ ticked?: TickedItem[] }
 /** todo.json on refs/switchboard/todo; removed: tombstones by id (`<id>.back` for a ticked item put back), kept so a merge never brings one back. */
 export type TodoDoc = TodoList & { version: 1; removed: Record<string, number> }

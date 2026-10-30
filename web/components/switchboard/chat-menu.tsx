@@ -2,7 +2,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { ChatRow } from '@/lib/hub-types'
 import type { HubCommand } from '@/lib/vscode-bridge'
-import { repoOf } from './look'
+import { projectName } from '@/lib/archive'
 
 type Item = { label: string; done: string; cmd: HubCommand; hint: string }
 
@@ -34,7 +34,7 @@ export function ChatMenu({ chat, starred, send, onMac }: { chat: ChatRow; starre
     else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); all[(at + (e.key === 'ArrowDown' ? 1 : -1) + all.length) % all.length]?.focus() }
     else if (e.key === 'Tab') setOpen(false)
   }
-  const name = chat.name ?? repoOf(chat.cwd)
+  const name = chat.name ?? projectName(chat)
   return (
     <span ref={wrap} className="hub-more" data-open={open || undefined} onKeyDown={key}>
       <button ref={btn} type="button" className="hub-more-btn" aria-haspopup="menu" aria-expanded={open} aria-controls={id} aria-label={`More for ${name}`} title="More"

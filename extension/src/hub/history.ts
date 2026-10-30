@@ -9,6 +9,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { SYSTEM_CONTENT_PREFIXES } from '../constants'
+import { projectName } from './projects'
 import type { DayUsage, SessionRow } from './types'
 
 const DAY_MS = 86_400_000
@@ -134,7 +135,7 @@ export class HistoryScanner {
       return
     }
     const cwd = typeof entry.cwd === 'string' ? entry.cwd : undefined
-    if (cwd && !tally.project) tally.project = path.basename(cwd)
+    if (cwd && !tally.project) tally.project = projectName(cwd)
     const ts = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN
     const message = entry.message as { role?: string; content?: unknown; usage?: Record<string, number> } | undefined
     if (wantsLabel && entry.type === 'user' && message?.role === 'user') {

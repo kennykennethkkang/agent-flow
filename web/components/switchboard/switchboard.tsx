@@ -1,7 +1,7 @@
 'use client'
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useHub } from '@/hooks/use-hub'
-import { chatProjects, hideIdle, inProjects, liveChats } from '@/lib/archive'
+import { chatProjects, hideIdle, inProjects, liveChats, projectName } from '@/lib/archive'
 import { switcherItems, type SwitchItem } from '@/lib/switcher'
 import { todayView } from '@/lib/today'
 import { byNeed, taskTotals } from '@/lib/progress'
@@ -22,7 +22,7 @@ import { PhoneAddress, PhoneQr } from './phone-qr'
 import { DevRows } from './dev-rows'
 import { ChatMenu } from './chat-menu'
 import { Sheet } from './sheet'
-import { placeOf, repoOf } from './look'
+import { placeOf } from './look'
 
 const copy = async (text: string) => { try { await navigator.clipboard.writeText(text); return true } catch { return false } }
 const PROJECTS_KEY = 'switchboard.projects'
@@ -36,10 +36,9 @@ const Ic = ({ d }: { d: string }) => <svg className="hub-ic" aria-hidden width="
 const ICON = {
   find: 'M7 12.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11ZM11 11l3.5 3.5',
   plus: 'M8 3v10M3 8h10',
-  out: 'M9 2.5h4.5V7M13.5 2.5 7 9M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3',
   phone: 'M5 1.5h6a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1ZM7 12.2h2',
   awake: 'M8 1.8v5.4M4.4 4a5.2 5.2 0 1 0 7.2 0',
-  gear: 'M8 10.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4ZM13 8l1.4-1-1.2-2.1-1.6.6-1.3-.8L10 3H6l-.3 1.7-1.3.8-1.6-.6L1.6 7 3 8 1.6 9l1.2 2.1 1.6-.6 1.3.8L6 13h4l.3-1.7 1.3-.8 1.6.6L14.4 9 13 8Z',
+  gear: 'M6.84 3.34L7.08 1.46L8.92 1.46L9.16 3.34A4.8 4.8 0 0 1 11.45 4.67L13.2 3.94L14.12 5.53L12.61 6.68A4.8 4.8 0 0 1 12.61 9.32L14.12 10.47L13.2 12.06L11.45 11.33A4.8 4.8 0 0 1 9.16 12.66L8.92 14.54L7.08 14.54L6.84 12.66A4.8 4.8 0 0 1 4.55 11.33L2.8 12.06L1.88 10.47L3.39 9.32A4.8 4.8 0 0 1 3.39 6.68L1.88 5.53L2.8 3.94L4.55 4.67A4.8 4.8 0 0 1 6.84 3.34ZM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z',
   chats: 'M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2v-7Z',
   chat: 'M8 8m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0M8 8m-6 0a6 6 0 1 0 12 0a6 6 0 1 0 -12 0',
   todo: 'M3 4h1.5M3 8h1.5M3 12h1.5M7 4h6M7 8h6M7 12h6',
@@ -96,8 +95,8 @@ export function Switchboard() {
   const cards: Card[] = useMemo(() => byNeed(liveChats(hub.chats, hub.archive ?? [])
     .map(chat => ({ chat, progress: hub.progress.find(p => p.sessionId === chat.sessionId) }))), [hub])
   // The rail shows the picked projects only, and hides chats idle past the setting (the picked one stays); Find still reaches every chat.
-  const shown = useMemo(() => cards.filter(c => inProjects(c.chat.cwd, projects)), [cards, projects])
-  const projectChips = useMemo(() => chatProjects(cards.map(c => c.chat.cwd), projects), [cards, projects])
+  const shown = useMemo(() => cards.filter(c => inProjects(c.chat, projects)), [cards, projects])
+  const projectChips = useMemo(() => chatProjects(cards.map(c => c.chat), projects), [cards, projects])
   const idleMinutes = hub.controls.switchboard.idleMinutes
   const rail = useMemo(() => hideIdle(shown, idleMinutes, pick.id), [shown, idleMinutes, pick.id])
   const current = shown.find(c => c.chat.sessionId === pick.id) ?? rail[0] ?? shown[0]
@@ -127,7 +126,7 @@ export function Switchboard() {
     setFinding(false)
     // A Find pick outside the filter clears it, so the chat shows. A History chain key starts with its folder.
     if (item.kind === 'live') { select(item.id, true); if (!shown.some(c => c.chat.sessionId === item.id)) pickProjects([]) }
-    else { setReveal({ chain: item.chain, at: Date.now() }); if (desk) setTab('chats'); if (!inProjects(item.chain.split('\n')[0], projects)) pickProjects([]) }
+    else { setReveal({ chain: item.chain, at: Date.now() }); if (desk) setTab('chats'); const cwd = item.chain.split('\n')[0]; if (!inProjects(hub.archive?.find(a => a.cwd === cwd) ?? { cwd }, projects)) pickProjects([]) }
   }
   const openGear = (at: Section = 'Chats') => { setGearAt(g => ({ at, n: g.n + 1 })); setPanel('gear') }
   // The To-do lists follow the shown chat's project, else this window's.
@@ -145,7 +144,7 @@ export function Switchboard() {
   const windows = hub.windows ?? []
   const starred = useMemo(() => hub.starred.map(s => s.sessionId), [hub.starred])
   // A project's window: the window holding any chat of that project.
-  const projectTint = (name: string) => placeOf(cards.find(c => repoOf(c.chat.cwd) === name)?.chat.cwd, windows)?.color
+  const projectTint = (name: string) => placeOf(cards.find(c => projectName(c.chat) === name)?.chat.cwd, windows)?.color
   const itemTint = (item: SwitchItem) => placeOf(item.kind === 'live' ? cards.find(c => c.chat.sessionId === item.id)?.chat.cwd : item.chain.split('\n')[0], windows)?.color
   const menu = (chat: Card['chat']) => <ChatMenu chat={chat} starred={starred.includes(chat.sessionId)} send={send} onMac={isVSCode} />
   const needs = cards.filter(c => c.progress?.state === 'needs-you').length
@@ -166,7 +165,6 @@ export function Switchboard() {
         {limit ? `${LIMIT[limit.kind] ?? limit.kind.replace('_', ' ')} limit · ${Math.round(limit.percentUsed)}% used` : ''}
       </span>
       {isVSCode && <>
-        <button type="button" className="hub-btn" aria-label="Open in browser" onClick={() => send({ type: 'hub-web', phone: false })} title={web ? `Open ${web} in your browser` : 'Start the browser app, then open it'}><Ic d={ICON.out} /><span className="hub-lbl">Open in browser ↗</span></button>
         <span style={{ position: 'relative' }}>
           {/* Asking for the link also starts the app when it is not running. */}
           <button type="button" className="hub-btn" aria-label="Phone" aria-haspopup="dialog" aria-expanded={phone} onClick={() => { if (!phone) send({ type: 'hub-web', phone: true }); setPhone(!phone) }}><Ic d={ICON.phone} /><span className="hub-lbl">Phone</span></button>
@@ -192,7 +190,7 @@ export function Switchboard() {
         title="Keeps this Mac awake so Switchboard and dev servers answer from anywhere. With the lid closed, only while on power.">
         <Ic d={ICON.awake} /><span className="hub-lbl">{hub.awake ? 'Awake' : 'Keep awake'}</span></button>}
       <button type="button" className="hub-btn hub-gear" aria-label="Settings" title="Settings" aria-expanded={panel === 'gear' || panel === 'signins'} onClick={() => (panel === 'none' || panel === 'new' ? openGear() : setPanel('none'))}>
-        <Ic d={ICON.gear} /><span className="hub-classic-only" aria-hidden>⚙</span>
+        <Ic d={ICON.gear} />
       </button>
     </header>
   )
@@ -207,10 +205,10 @@ export function Switchboard() {
   const gear = <Gear key={gearAt.n} hub={hub} send={send} start={gearAt.at} layout={layout} onLayout={setLayout} onSignIns={() => setPanel('signins')} />
   const signIns = <SignIns hub={hub} send={send} problem={problem} onClose={() => openGear('Accounts')} />
   const filter = (projectChips.length > 1 || projects.length > 0) && <ProjectFilter projects={projectChips} picked={projects} tint={projectTint} onChange={pickProjects} />
-  const dev = <DevRows dev={(hub.dev ?? []).filter(d => inProjects(d.folder, projects))} tailscale={hub.tailscale} isVSCode={isVSCode} send={send} />
+  const dev = <DevRows dev={(hub.dev ?? []).filter(d => inProjects({ cwd: d.folder, project: d.repo }, projects))} tailscale={hub.tailscale} isVSCode={isVSCode} send={send} />
   const chatCards = <ChatCards cards={rail} waits={hub.waits} selected={currentId} windows={windows} here={hub.thisWindow} onSelect={select} starred={starred} menu={menu}
     empty={cards.length ? 'No chats in the picked projects.' : undefined} />
-  const history = <History archive={(hub.archive ?? []).filter(a => inProjects(a.cwd, projects))} chats={cards.map(c => c.chat)} search={hub.search} reveal={reveal}
+  const history = <History archive={(hub.archive ?? []).filter(a => inProjects(a, projects))} chats={cards.map(c => c.chat)} search={hub.search} reveal={reveal}
     onSearch={q => send({ type: 'hub-search', q })}
     onNote={sessionId => send({ type: 'hub-open-note', sessionId })} onResume={(sessionId, ai) => send({ type: 'hub-resume', sessionId, ai })} />
   const todayCard = <TodayCard today={today} tasks={tasks} />

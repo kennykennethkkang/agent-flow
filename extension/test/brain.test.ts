@@ -5,6 +5,9 @@
  */
 
 import { describe, it } from 'node:test'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import assert from 'node:assert/strict'
 import { board, brief, quickAskArgs, suggest, withBrief } from '../src/hub/brain'
 import { emptyHub } from '../src/hub/hub-service'
@@ -26,6 +29,17 @@ describe('brain board', () => {
     const b = board(state([chat('a', '/w/Armasu'), chat('b', '/w/Armasu/app', { prompt: 'fix the bag' }), chat('c', '/w/agent-flow')]))
     assert.deepEqual(b.map(p => [p.project, p.chats.length]), [['Armasu', 2], ['agent-flow', 1]])
     assert.equal(b[0].chats.find(c => c.sessionId === 'b')?.prompt, 'fix the bag')
+  })
+
+  it('names a subfolder of a git repo by the repo, even when the subfolder is listed', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-brain-'))
+    try {
+      const repo = path.join(tmp, 'agent-flow'), sub = path.join(repo, 'extension')
+      fs.mkdirSync(path.join(repo, '.git'), { recursive: true })
+      fs.mkdirSync(sub)
+      const b = board(state([chat('a', sub), chat('b', repo)], { projects: [{ name: 'extension', path: sub, kind: 'project', isOpen: false }] }))
+      assert.deepEqual(b.map(p => [p.project, p.chats.length]), [['agent-flow', 2]])
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
   })
 
   it('names a folder outside every project by its last part', () => {

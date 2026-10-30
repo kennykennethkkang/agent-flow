@@ -8,10 +8,10 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { execFileSync } from 'child_process'
-import { addTodo, afterEnd, afterFinish, clearGone, editTodo, emptyDoc, finishPrompt, hostId, mergeDocs, moveChat, ownerRepo, parseDoneIds, readDoc, readOptIn, removeItem, setOptIn, startTodo, storeFor, syncDoc, syncMode, todoFinished, updateDoc, TODO_REF, remoteSeen, replaceRemote, runOrder, runMessage, toolStep, mentions, restoreTicked } from '../src/hub/todo'
+import { addTodo, afterEnd, afterFinish, clearGone, editTodo, emptyDoc, finishPrompt, hostId, mergeDocs, moveChat, ownerRepo, parseDoneIds, readDoc, readOptIn, removeItem, setOptIn, startTodo, storeFor, syncDoc, syncMode, todoFinished, updateDoc, TODO_REF, remoteSeen, replaceRemote, runOrder, runMessage, toolStep, mentions, restoreTicked, projectOf, finishItem, parseDoc } from '../src/hub/todo'
 import { commandProblem, handleHub } from '../src/hub/routes'
 import { git } from '../src/hub/git'
-import { HubService } from '../src/hub/hub-service'
+import { HubService, hub } from '../src/hub/hub-service'
 import type { ChatProgress, TodoDoc } from '../src/hub/types'
 
 // The host id lands in a temp HOME, never the real ~/.claude.
@@ -22,6 +22,23 @@ after(() => fs.rmSync(HOME, { recursive: true, force: true }))
 
 const chat = (over: Partial<ChatProgress> = {}): ChatProgress => ({ sessionId: 's1', cwd: '/p', state: 'done', roles: [], tasks: [], startedAt: 0, at: 0, ...over })
 
+describe('todo project', () => {
+  it('files a repo subfolder under the repo even when the subfolder is listed, so its items stay on one list', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-todo-proj-'))
+    const was = hub.get().projects
+    try {
+      const repo = path.join(tmp, 'agent-flow'), sub = path.join(repo, 'extension'), plain = path.join(tmp, 'notes')
+      fs.mkdirSync(path.join(repo, '.git'), { recursive: true })
+      fs.mkdirSync(sub)
+      fs.mkdirSync(path.join(plain, 'a'), { recursive: true })
+      hub.set({ projects: [{ name: 'extension', path: sub, kind: 'project', isOpen: false }, { name: 'notes', path: plain, kind: 'project', isOpen: false }] })
+      assert.equal(projectOf(sub), repo)
+      assert.equal(projectOf(path.join(plain, 'a')), plain)
+      assert.equal(projectOf('/nowhere/x'), '/nowhere/x')
+    } finally { hub.set({ projects: was }); fs.rmSync(tmp, { recursive: true, force: true }) }
+  })
+})
+
 describe('todo merge', () => {
   it('unions by id, drops tombstones from either side, newer edit wins', () => {
     const a: TodoDoc = { version: 1, todo: [{ id: 't1', text: 'old', at: 1 }, { id: 't2', text: 'gone', at: 1 }], removed: { x: 5 } }
@@ -30,6 +47,19 @@ describe('todo merge', () => {
     assert.deepEqual(m.todo, [{ id: 't1', text: 'new', at: 2, before: 't3', from: 's9' }, { id: 't3', text: 'b only', at: 1 }])
     assert.deepEqual(m.removed, { x: 9, t2: 3 })
     assert.deepEqual(mergeDocs(b, a, 10).todo.map(t => t.text).sort(), ['b only', 'new'])
+  })
+
+  it('keeps an item marked done in the finished list, by the chat or by you, and puts it back', () => {
+    let d = addTodo(emptyDoc(), 'Ship it', 1, 'aaaa1111')
+    d = finishItem(d, 'aaaa1111', undefined, 2)
+    assert.deepEqual(d.todo, [])
+    assert.deepEqual(d.ticked, [{ id: 'aaaa1111', text: 'Ship it', at: 2 }])
+    assert.ok(Object.hasOwn(d.removed, 'aaaa1111'))
+    assert.deepEqual(parseDoc(JSON.stringify(d)).ticked, d.ticked)
+    const t = toolStep(addTodo(emptyDoc(), 'Fix login', 1, 'bbbb2222'), { op: 'done', id: 'bbbb2222', session: 'c1' }, 3)
+    assert.deepEqual(t.doc.ticked, [{ id: 'bbbb2222', text: 'Fix login', at: 3, by: 'c1' }])
+    assert.deepEqual(restoreTicked(d, 'aaaa1111', 4, 'cccc3333').todo.map(x => x.text), ['Ship it'])
+    assert.equal(finishItem(d, 'nope', undefined, 5), d)
   })
 
   it('unions ticked items by id, newest 10, and never brings back one put back', () => {

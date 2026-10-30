@@ -50,6 +50,9 @@ export function readNewFileLines(
   return { lines, newSize: stat.size, tail }
 }
 
+/** c:\ and C:\ as one spelling, so a path used as a key does not split by who reported it. */
+export const upperDrive = (p: string) => p.replace(/^[a-z]:/, d => d.toUpperCase())
+
 /** Case-fold a path string for comparison on Windows, where the filesystem is
  *  case-insensitive and tools disagree on drive-letter case (VS Code reports
  *  `c:\...`, Claude Code and most shells report `C:\...`). Identity elsewhere. */

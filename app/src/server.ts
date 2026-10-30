@@ -11,6 +11,7 @@ import { exec, execFile } from 'child_process'
 import { createRelay } from '../../scripts/relay'
 import { createTelemetryClient } from '../../scripts/telemetry'
 import { serveStatic } from './static'
+import { portTaken } from './port'
 import { codeLogin, deniedAs, deviceAsks, lanCookie, lanFor, lanGate, lanHosts, liveToken, macNames, phoneSecret, proxyHub, signInPage, tellWindows, uaSummary, waitPage, windows, type Lan } from './hub-proxy'
 import { ipv4s } from '../../extension/src/hub/lan'
 
@@ -28,6 +29,11 @@ const LAN_FILE = path.join(os.homedir(), '.claude', 'switchboard', 'web.lan')
 
 export async function startServer(options: ServerOptions) {
   const { port, openBrowser, workspace } = options
+  // macOS lets a 127.0.0.1 and a 0.0.0.0 copy share the port; the second one would answer half the requests.
+  if (await portTaken(port)) {
+    console.log(`Port ${port} is already in use; is Switchboard already running?`)
+    process.exit(1)
+  }
 
   const configDir = path.join(os.homedir(), '.agent-flow')
   const telemetry = createTelemetryClient({
@@ -174,7 +180,7 @@ export async function startServer(options: ServerOptions) {
   function cleanup() {
     if (shuttingDown) return
     shuttingDown = true
-    try { if (fs.readFileSync(WEB_FILE, 'utf8') === `http://127.0.0.1:${port}`) fs.unlinkSync(WEB_FILE) } catch { /* gone */ }
+    // web.url stays: the extension probes it before use, and deleting it once cost the phone its link.
     try { if (options.lan && fs.readFileSync(LAN_FILE, 'utf8') === lanMark) fs.unlinkSync(LAN_FILE) } catch { /* gone */ }
     server.close()
     relay.dispose()

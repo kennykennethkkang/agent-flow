@@ -108,20 +108,24 @@ export function TodoPanel({ folder: home, todos, chats, progress = [], windows, 
         {targets.map(c => <button key={c.sessionId} type="button" className="hub-btn" style={small} onClick={() => run(c.sessionId)}>Send to {c.name ?? 'running chat'}</button>)}
         <button type="button" className="hub-link" style={{ fontSize: 12 }} onClick={() => setPicked([])}>Clear</button>
       </div>}
-      {!!list.ticked?.length && <div role="group" aria-labelledby="ticked-title" style={{ display: 'grid', gap: 6, paddingTop: 10, borderTop: '1px solid var(--hub-hair)' }}>
-        <h4 id="ticked-title" style={caps}><span>Ticked off by a chat</span><span>{list.ticked.length}</span></h4>
-        <p style={hint}>A chat finished these. Put one back if it still needs doing.</p>
+      {!!list.ticked?.length && <details className="hub-fold-list">
+        <summary>
+          <b aria-hidden>›</b>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--hub-ink)' }}>Finished</span>
+          <span style={tag}>{list.ticked.length}</span>
+        </summary>
+        <p style={{ ...hint, margin: '6px 0' }}>Done items, newest first. Put one back if it still needs doing.</p>
         <ul role="list" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 2 }}>
           {list.ticked.map(t => <li key={t.id} style={{ ...row, flexWrap: 'wrap', columnGap: 8, rowGap: 0, paddingLeft: 11 }}>
             <span style={{ display: 'flex', gap: 10, alignItems: 'baseline', flex: '1 1 220px', minWidth: 0, fontSize: 13, color: 'var(--hub-mute)' }}>
               <span style={{ color: 'var(--hub-green)', alignSelf: 'center', display: 'inline-flex', width: 18, justifyContent: 'center' }}><Check size={12} /></span>
-              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{t.text}<span style={{ ...tag, marginLeft: 6 }}>by {name(t.by) ?? 'a finished chat'}</span></span>
+              <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{t.text}<span style={{ ...tag, marginLeft: 6 }}>by {t.by ? name(t.by) ?? 'a finished chat' : 'you'}</span></span>
             </span>
             <button type="button" className="hub-link" style={{ fontSize: 12, marginLeft: 'auto', color: 'var(--hub-blue)' }} aria-label={`Put back ${t.text}`}
               onClick={() => send({ type: 'hub-todo-restore', path: folder, id: t.id })}>Put back</button>
           </li>)}
         </ul>
-      </div>}
+      </details>}
       <p role="status" style={{ margin: 0, fontSize: 12, color: 'var(--hub-green)', minHeight: said ? undefined : 0 }}>{said}</p>
       <form style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} onSubmit={e => { e.preventDefault(); add() }}>
         <input aria-label="New to-do item" placeholder="Add something for later" maxLength={MAX} value={text} onChange={e => setText(e.target.value)} style={{ ...field, flex: '1 1 160px' }} />

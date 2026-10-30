@@ -382,6 +382,8 @@ describe('browser link', () => {
     up.add('http://127.0.0.1:3131')
     assert.equal(await webUrl(async u => up.has(u), async () => 'http://127.0.0.1:3131'), 'http://127.0.0.1:3131')
     assert.equal(await webUrl(async () => false, async () => 'http://127.0.0.1:3131'), null)
+    // web.url left by a copy that has since gone: the app on 3131 is still found.
+    assert.equal(await webUrl(async u => u === 'http://127.0.0.1:3131', async () => 'http://127.0.0.1:3150'), 'http://127.0.0.1:3131')
     const asked: string[] = []
     await webUrl(async u => { asked.push(u); return false }, async () => 'http://127.0.0.1:3000')
     assert.ok(asked.every(u => !u.includes(':3000') && !u.includes(':3010')))

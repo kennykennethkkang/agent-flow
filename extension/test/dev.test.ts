@@ -1,4 +1,7 @@
 import { describe, it } from 'node:test'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import assert from 'node:assert/strict'
 import { devCommand, devHome, devLink, devRows, knownDev, offArgs, serveArgs, servedPorts } from '../src/hub/dev'
 
@@ -56,14 +59,25 @@ describe('dev button', () => {
     ]
     const rows = devRows(['/r/QR-Test', '/r/Web', '/r/QR-Test', '/r/None'], read, servers, { dns: 'mac.ts.net', https: false, served: new Set([15173]) })
     assert.deepEqual(rows, [
-      { folder: '/r/QR-Test', project: 'QR-Test', command: 'npm run dev', port: 5173, link: 'http://mac.ts.net:15173' },
-      { folder: '/r/Web', project: 'Web', command: 'pnpm run dev' },
+      { folder: '/r/QR-Test', project: 'QR-Test', repo: 'QR-Test', command: 'npm run dev', port: 5173, link: 'http://mac.ts.net:15173' },
+      { folder: '/r/Web', project: 'Web', repo: 'Web', command: 'pnpm run dev' },
     ])
-    assert.deepEqual(devRows(['/r/QR-Test'], read, servers, null)[0], { folder: '/r/QR-Test', project: 'QR-Test', command: 'npm run dev', port: 5173 })
+    assert.deepEqual(devRows(['/r/QR-Test'], read, servers, null)[0], { folder: '/r/QR-Test', project: 'QR-Test', repo: 'QR-Test', command: 'npm run dev', port: 5173 })
+  })
+
+  it('files a repo subfolder row under its repo, keeping the folder name for its terminal', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-dev-'))
+    try {
+      const web = path.join(tmp, 'agent-flow', 'web')
+      fs.mkdirSync(path.join(tmp, 'agent-flow', '.git'), { recursive: true })
+      fs.mkdirSync(web)
+      const [row] = devRows([web], () => ({ command: 'pnpm dev' }), [], null)
+      assert.deepEqual([row.project, row.repo], ['web', 'agent-flow'])
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
   })
 
   it('starts only a listed project folder, never a free path', () => {
-    const rows = [{ folder: '/r/QR-Test', project: 'QR-Test', command: 'npm run dev' }]
+    const rows = [{ folder: '/r/QR-Test', project: 'QR-Test', repo: 'QR-Test', command: 'npm run dev' }]
     assert.equal(knownDev(rows, '/r/QR-Test')?.project, 'QR-Test')
     assert.equal(knownDev(rows, '/r/QR-Test/../Armasu'), undefined)
     assert.equal(knownDev(rows, '/etc'), undefined)

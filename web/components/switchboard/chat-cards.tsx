@@ -3,8 +3,8 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AiId, ArchivedChat, ChatProgress, ChatRow, ChatState, TaskRow, HandoffWait, NoteSearch, WindowInfo } from '@/lib/hub-types'
 import { byWindow } from '@/lib/windows'
 import { eta, say } from '@/lib/eta'
-import { archiveChains, filterChains, historyCount, liveVersion, splitVersion } from '@/lib/archive'
-import { ALMOST, STATE, WINDOW_VAR, ago, almostDone, caps, coverage, label, missedCount, repoOf } from './look'
+import { archiveChains, filterChains, historyCount, liveVersion, projectName, splitVersion } from '@/lib/archive'
+import { ALMOST, STATE, WINDOW_VAR, ago, almostDone, caps, coverage, label, missedCount } from './look'
 import { chip } from './tool-chips'
 
 export type Card = { chat: ChatRow; progress?: ChatProgress }
@@ -152,13 +152,13 @@ function CardList({ cards, label, stripe, grouped, waits, selected, starred, men
               <span className="hub-card-top" style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline', paddingRight: menu ? 30 : 0 }}>
                 <span style={{ display: 'flex', gap: 6, alignItems: 'baseline', minWidth: 0 }}>
                   {starred.includes(chat.sessionId) && <span title="Starred" style={{ color: 'var(--hub-yellow)', flex: 'none' }}>★<span className="sr-only"> starred</span></span>}
-                  <span className="hub-card-name" style={{ color: 'var(--hub-ink)', fontWeight: 500, letterSpacing: 0.2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{origin || repoOf(chat.cwd)}</span>
+                  <span className="hub-card-name" style={{ color: 'var(--hub-ink)', fontWeight: 500, letterSpacing: 0.2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{origin || projectName(chat)}</span>
                   {version > 1 && <Version n={version} />}
                 </span>
                 <span className="hub-chip" style={{ color: s.color, background: s.soft, flexShrink: 0 }}>{finished ? <Check /> : <i aria-hidden />}{s.label}</span>
               </span>
               <span style={{ font: '400 12px/1.5 var(--hub-mono)', color: 'var(--hub-ash)' }}>
-                {[grouped ? '' : repoOf(chat.cwd), finished ? '' : active, progress ? ago(progress.at) : ''].filter(Boolean).join(' · ')}
+                {[grouped ? '' : projectName(chat), finished ? '' : active, progress ? ago(progress.at) : ''].filter(Boolean).join(' · ')}
               </span>
               {/* A button reads its children as flat text, so the progressbar screen readers get sits beside it; this one is the look. */}
               {tasks.length > 0 && !finished && <span aria-hidden style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8, alignItems: 'center' }}>
@@ -173,7 +173,7 @@ function CardList({ cards, label, stripe, grouped, waits, selected, starred, men
               {wait && <span style={{ color: 'var(--hub-yellow)', fontSize: 13 }}>Waiting for {wait.tasks} task{wait.tasks === 1 ? '' : 's'} to finish before moving to {wait.next}</span>}
               {progress?.state === 'needs-you' && progress.question && <span style={{ color: 'var(--hub-red)', fontSize: 13 }}>{progress.question}</span>}
             </button>
-            {tasks.length > 0 && !finished && <div className="sr-only"><TaskBar done={done} total={tasks.length} label={`Tasks done in ${origin || repoOf(chat.cwd)}`} /></div>}
+            {tasks.length > 0 && !finished && <div className="sr-only"><TaskBar done={done} total={tasks.length} label={`Tasks done in ${origin || projectName(chat)}`} /></div>}
             {menu && <span className="hub-more-at">{menu(chat)}</span>}
           </li>
         )

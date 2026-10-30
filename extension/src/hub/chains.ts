@@ -10,7 +10,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { writeJsonAtomic } from '../hook-entries'
-import { chainBase, inWorkspace } from './projects'
+import { chainBase, inWorkspace, projectName } from './projects'
 import { isAi } from './ais'
 import type { ArchivedChat, ChatRow } from './types'
 
@@ -95,7 +95,8 @@ function loadArchive(file: string): { rows: ArchivedChat[]; bad: boolean } {
   } catch { return { rows: [], bad: true } }
 }
 
-export const readArchive = (file = ARCHIVE): ArchivedChat[] => loadArchive(file).rows
+// project is renamed on read, so rows saved under a subfolder's name (extension) join their repo (agent-flow).
+export const readArchive = (file = ARCHIVE): ArchivedChat[] => loadArchive(file).rows.map(r => ({ ...r, project: projectName(r.cwd) }))
 
 /** Writes the archive; an unreadable file is kept beside it first, so a write never wipes History. */
 function writeArchive(file: string, edit: (rows: ArchivedChat[]) => ArchivedChat[]): void {

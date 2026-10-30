@@ -475,8 +475,8 @@ body.vscode-light, body.vscode-high-contrast-light {
 .hub-limit { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font: 400 12px/1 var(--hub-mono); color: var(--hub-mute); white-space: nowrap; }
 .hub-limit > i { display: none; }
 .hub-awake[aria-pressed='true'] { border-color: var(--hub-green); color: var(--hub-ink); }
-.hub:not(.desk) .hub-gear { font-size: 17px; padding: 6px 11px; line-height: 1; }
-.hub:not(.desk) .hub-ic, .hub.desk .hub-classic-only { display: none; }
+.hub:not(.desk) .hub-gear { display: inline-flex; align-items: center; padding: 8px 10px; }
+.hub:not(.desk) .hub-btn:not(.hub-gear) .hub-ic { display: none; }
 .hub-device { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--hub-hair); background: var(--hub-blue-soft); color: var(--hub-ink); }
 .hub-pop {
   position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; width: 236px; padding: 12px; display: grid; gap: 8px; justify-items: center;

@@ -6,6 +6,7 @@
  * GET  /hub/keep    what a full chat does: always continue in a fresh chat (token in the query)
  * GET  /hub/brief   the brief for a new chat in ?cwd= (token in the query); its own project only
  * GET  /hub/ask     ?cwd=&q=: one paid Haiku answer from that project's board (token in the query)
+ * GET  /hub/holds   204 when this window holds the chat's terminal, so the app routes its commands here
  * GET  /hub/state   the whole HubState, for the standalone web app's proxy (token in the query); no thisWindow, it is no window
  * POST /hub/command a hub-* command, run as the panel's (token in the query)
  * POST /hub/device  the standalone app passes on a device asking to sign in, or that it was answered (token in the query)
@@ -164,6 +165,12 @@ export function handleHub(hub: HubService, method: string | undefined, url: stri
     if (!asks) return text('Ask the brain is off in Switchboard, Controls.')
     if (!q) return { status: 400, body: '' }
     return ask(q, askContext(hub.get(), cwd, hub.stopped())).then(text)
+  }
+
+  if (method === 'GET' && u.pathname === '/hub/holds') {
+    if (!hub.isToken(u.searchParams.get('token'))) return { status: 403, body: '' }
+    const id = u.searchParams.get('session') ?? ''
+    return Promise.resolve(hub.holds?.(id) ?? false).then(yes => ({ status: yes ? 204 : 404, body: '' }))
   }
 
   if (method === 'GET' && u.pathname === '/hub/state') {

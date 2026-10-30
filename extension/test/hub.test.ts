@@ -20,6 +20,17 @@ const handleHub = (...a: Parameters<typeof route>) => route(...a) as HubReply | 
 const live = (token: string, sessionId: string, extra: Record<string, unknown> = {}) =>
   JSON.stringify({ token, kind: 'live', sessionId, cwd: '/w', limits: [{ kind: 'five_hour', percentUsed: 41 }], tokens: 82000, ...extra })
 
+describe('hub holds', () => {
+  it('says whether this window holds a chat, so the app sends its commands here', async () => {
+    const hub = new HubService()
+    hub.holds = async id => id === 'mine'
+    const ask = (id: string, token = hub.token) => route(hub, 'GET', `/hub/holds?session=${id}&token=${token}`, '') as Promise<HubReply>
+    assert.equal((await ask('mine')).status, 204)
+    assert.equal((await ask('theirs')).status, 404)
+    assert.equal((await ask('mine', 'wrong')).status, 403)
+  })
+})
+
 describe('hub feed', () => {
   it('ignores a post without the token', () => {
     const hub = new HubService()

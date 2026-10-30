@@ -176,8 +176,8 @@ export function demoHub(now = Date.now()): HubState {
     ],
     git: { branch: 'Social-media-dev', ahead: 0, behind: 0, changed: 55, staged: 0, untracked: 7 },
     dev: [
-      { folder: '/Users/k/Documents/GitHub/Armasu', project: 'Armasu', command: 'pnpm run dev', port: 3000, link: `${DEMO_TAILNET}:13000` },
-      { folder: '/Users/k/Documents/GitHub/QR-Test', project: 'QR-Test', command: 'npm run dev' },
+      { folder: '/Users/k/Documents/GitHub/Armasu', project: 'Armasu', repo: 'Armasu', command: 'pnpm run dev', port: 3000, link: `${DEMO_TAILNET}:13000` },
+      { folder: '/Users/k/Documents/GitHub/QR-Test', project: 'QR-Test', repo: 'QR-Test', command: 'npm run dev' },
     ],
     tailscale: true,
     awake: false,
@@ -470,7 +470,10 @@ export function demoApply(h: HubState, c: HubCommand): HubState {
       const now = Date.now(), id = `dt-${now.toString(36)}`
       if (c.type === 'hub-todo-add') return c.text.trim() ? set({ ...list, todo: [...list.todo, { id, text: c.text.trim(), at: now }] }) : h
       if (c.type === 'hub-todo-edit') return set({ ...list, todo: list.todo.map(t => (t.id === c.id ? { ...t, text: c.text.trim() || t.text, at: now } : t)) })
-      if (c.type === 'hub-todo-remove') return set({ ...list, todo: list.todo.filter(t => t.id !== c.id) })
+      if (c.type === 'hub-todo-remove') {
+        const t = list.todo.find(x => x.id === c.id)
+        return t ? set({ ...list, todo: list.todo.filter(x => x !== t), ticked: [{ id: t.id, text: t.text, at: now }, ...list.ticked ?? []].slice(0, 10) }) : h
+      }
       if (c.type === 'hub-todo-restore') {
         const t = list.ticked?.find(x => x.id === c.id)
         if (!t) return h

@@ -4,7 +4,8 @@ import type { Ask, ChatProfile, Choice, ChatProgress, ChatRow, Connection, Insta
 import { askChoice } from '@/lib/ask'
 import { limitLine, testsPrompt } from '@/lib/checks'
 import { eta, say, type Eta } from '@/lib/eta'
-import { ago, almostDone, caps, coverage, panel, repoOf } from './look'
+import { projectName } from '@/lib/archive'
+import { ago, almostDone, caps, coverage, panel } from './look'
 import { OrbitView } from './orbits'
 import { Switch } from './gear'
 import { Check, CopyCommit, Receipt, chipOf, finishedLine, hhmm, plural, stillRunning } from './chat-cards'
@@ -155,7 +156,7 @@ export function ChatPicture({ chat, progress, live, instant, models = {}, profil
   useEffect(() => { const t = setInterval(tick, 30e3); return () => clearInterval(t) }, [])
   const toggle = (on: boolean) => { setShowTools(on); try { localStorage.setItem(TOOLS_KEY, on ? 'on' : 'off') } catch { /* no storage */ } }
 
-  const state = progress?.state ?? 'idle', s = chipOf(progress), name = chat.name ?? repoOf(chat.cwd)
+  const state = progress?.state ?? 'idle', s = chipOf(progress), name = chat.name ?? projectName(chat)
   const since = ago(progress?.at ?? chat.updatedAt ?? Date.now())
   const tasks = progress?.tasks ?? [], now = Date.now(), e = progress && tasks.length ? eta(progress, now) : undefined
   const running = stillRunning(progress)
@@ -203,8 +204,8 @@ export function ChatPicture({ chat, progress, live, instant, models = {}, profil
         <div style={{ display: 'grid', gap: 4, minWidth: 0 }}>
           <h2 id="pic-name" style={{ margin: 0, font: '500 22px/1.15 var(--hub-sans)', color: 'var(--hub-ink)', textWrap: 'balance' }}>{name}</h2>
           <p style={{ margin: 0, font: '400 13px/1.4 var(--hub-mono)', color: 'var(--hub-ash)' }}>
-            {place && <span title={`In the ${place.name} window`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: place.color, marginRight: 8 }}><i aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: 'currentColor' }} />{place.name}{place.name === repoOf(chat.cwd) && <span className="sr-only"> window</span>}</span>}
-            {place?.name === repoOf(chat.cwd) ? '' : repoOf(chat.cwd)}{place?.name === repoOf(chat.cwd) ? '· ' : ' · '}<span style={{ color: s.color }}>{s.label}</span> · {since}</p>
+            {place && <span title={`In the ${place.name} window`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: place.color, marginRight: 8 }}><i aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: 'currentColor' }} />{place.name}{place.name === projectName(chat) && <span className="sr-only"> window</span>}</span>}
+            {place?.name === projectName(chat) ? '' : projectName(chat)}{place?.name === projectName(chat) ? '· ' : ' · '}<span style={{ color: s.color }}>{s.label}</span> · {since}</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Switch on={showTools} onChange={toggle} label="Show tool calls on the map" text="Tool calls" />

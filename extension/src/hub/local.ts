@@ -258,9 +258,9 @@ export async function servesLive(url: string): Promise<boolean> {
   } catch { return false }
 }
 
-/** The first address with Switchboard's live page, or null when the app is not running. */
+/** The first address with Switchboard's live page, or null when the app is not running. 3131 is tried too: web.url may name a copy that has gone. */
 export async function webUrl(probe = servesLive, read = announced): Promise<string | null> {
-  const urls = [await read(), `http://127.0.0.1:${DEFAULT_RELAY_PORT}`].filter((u): u is string => !!u && !/:(3000|3010)$/.test(u))
+  const urls = [await read(), 'http://127.0.0.1:3131', `http://127.0.0.1:${DEFAULT_RELAY_PORT}`].filter((u): u is string => !!u && !/:(3000|3010)$/.test(u))
   for (const url of new Set(urls)) if (await probe(url)) return url
   return null
 }

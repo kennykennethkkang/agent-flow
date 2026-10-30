@@ -15,6 +15,8 @@ import * as zlib from 'zlib'
 type Win = { port: number; hubToken: string; workspace: string; mtimeMs: number; pid?: number }
 const DIR = path.join(os.homedir(), '.claude', 'switchboard')
 const MAX_BODY = 64 * 1024
+// A tool pick or a sync with origin runs well past 5 s; the panel never times them out, so the app waits too.
+const COMMAND_MS = 120_000
 
 // EPERM: the process exists but belongs to someone else.
 function pidAlive(pid: number): boolean {
@@ -49,6 +51,22 @@ export function commandFolder(body: string): string | undefined {
     return routed && typeof c.path === 'string' ? c.path : undefined
   } catch { return undefined }
 }
+
+/** The chat a command names (send, answer, focus, git...), so it can go to the window holding that chat's terminal. */
+export function commandSession(body: string): string | undefined {
+  try {
+    const id = (JSON.parse(body) as { sessionId?: unknown })?.sessionId
+    return typeof id === 'string' && /^[\w-]{1,64}$/.test(id) ? id : undefined
+  } catch { return undefined }
+}
+
+// 204: this window holds the chat's terminal (a Codex tie, a Claude terminal); its Codex typing and focus work only there.
+const holds = (w: Win, id: string) => new Promise<boolean>(done => {
+  const r = http.request({ host: '127.0.0.1', port: w.port, path: `/hub/holds?session=${encodeURIComponent(id)}&token=${encodeURIComponent(w.hubToken)}`, timeout: 1500 }, x => { x.resume(); done(x.statusCode === 204) })
+  r.on('error', () => done(false))
+  r.on('timeout', () => r.destroy())
+  r.end()
+})
 
 /** lan only for a request whose localAddress is a LAN one, already through lanGate. */
 export function allowed(h: http.IncomingHttpHeaders, port: number, lan?: Lan): boolean {
@@ -249,9 +267,22 @@ export async function proxyHub(req: http.IncomingMessage, res: http.ServerRespon
     body += chunk
     if (body.length > MAX_BODY) { res.writeHead(413).end(); return }
   }
-  const win = pickWindow(await list(), workspace, undefined, route === 'command' ? commandFolder(body) : undefined)
+  const files = await list()
+  const folder = route === 'command' ? commandFolder(body) : undefined
+  let win = pickWindow(files, workspace, undefined, folder)
   if (!win) { res.writeHead(502).end(); return }
-  const up = http.request({ host: '127.0.0.1', port: win.port, method: req.method, path: `/hub/${route}?token=${encodeURIComponent(win.hubToken)}`, headers: { 'Content-Type': 'application/json' }, timeout: 5000 }, r => {
+  const session = route === 'command' && !folder ? commandSession(body) : undefined
+  if (session) {
+    const live = files.filter((f): f is Win => usable(f, pidAlive))
+    // First window to say yes wins, so a hung one only costs its timeout when nobody holds the chat.
+    const holder = await new Promise<Win | undefined>(done => {
+      let left = live.length
+      if (!left) done(undefined)
+      for (const w of live) void holds(w, session).then(yes => { if (yes) done(w); else if (--left === 0) done(undefined) })
+    })
+    if (holder) win = holder
+  }
+  const up = http.request({ host: '127.0.0.1', port: win.port, method: req.method, path: `/hub/${route}?token=${encodeURIComponent(win.hubToken)}`, headers: { 'Content-Type': 'application/json' }, timeout: route === 'state' ? 5000 : COMMAND_MS }, r => {
     const head = { 'Content-Type': r.headers['content-type'] ?? 'text/plain', 'Cache-Control': 'no-store' }
     if (route !== 'state' || r.statusCode !== 200) { res.writeHead(r.statusCode ?? 502, head); r.pipe(res); return }
     // The page polls state every 2s: a 304 when nothing changed, else gzip, since a full state runs to a few hundred KB.

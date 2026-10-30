@@ -8,6 +8,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { run } from './local'
 import { tailscaleBin } from './lan'
+import { projectName } from './projects'
 import type { DevProject, Server } from './types'
 
 const DIR = path.join(os.homedir(), '.claude', 'switchboard')
@@ -54,7 +55,7 @@ export function devRows(folders: string[], read: (folder: string) => { command: 
     if (!command) continue
     const port = servers.find(s => s.port !== APP_PORT && s.cwd && inside(folder, s.cwd))?.port
     const link = port && ts?.served.has(port + SHIFT) ? devLink(ts.dns, port, ts.https) : undefined
-    rows.push({ folder, project: path.basename(folder), command, ...(port ? { port } : {}), ...(link ? { link } : {}) })
+    rows.push({ folder, project: path.basename(folder), repo: projectName(folder), command, ...(port ? { port } : {}), ...(link ? { link } : {}) })
   }
   return rows
 }

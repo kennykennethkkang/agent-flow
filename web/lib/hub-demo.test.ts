@@ -108,13 +108,14 @@ test('the demo applies to-do commands to its sample list, with one item a chat t
   assert.equal(list().ticked?.length, 1)
   h = demoApply(h, { type: 'hub-todo-remove', path: at, id: 'dt1' })
   assert.ok(!list().todo.some(t => t.id === 'dt1'))
+  assert.equal(list().ticked?.[0].id, 'dt1')
   h = demoApply(h, { type: 'hub-todo-add', path: at, text: ' New one ' })
   assert.equal(list().todo.at(-1)?.text, 'New one')
   h = demoApply(h, { type: 'hub-todo-edit', path: at, id: 'dt4', text: 'Edited' })
   assert.equal(list().todo.find(t => t.id === 'dt4')?.text, 'Edited')
-  const ticked = list().ticked![0]
+  const ticked = list().ticked![1]
   h = demoApply(h, { type: 'hub-todo-restore', path: at, id: ticked.id })
-  assert.equal(list().ticked?.length ?? 0, 0)
+  assert.equal(list().ticked?.length, 1)
   assert.ok(list().todo.some(t => t.text === ticked.text && t.id !== ticked.id && t.from === ticked.from && t.before === ticked.before))
   h = demoApply(h, { type: 'hub-todo-run', path: at, ids: ['dt4'] })
   assert.ok(list().todo.find(t => t.id === 'dt4')?.chat)

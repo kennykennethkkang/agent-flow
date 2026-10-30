@@ -1,11 +1,12 @@
 /** The Today card's numbers, from the live chats, the usage history and the live feeds. */
 import type { ChatState, DayUsage, JevRun, SessionLive } from './hub-types'
+import { projectName } from './archive'
 
-type Card = { chat: { sessionId: string; name?: string; cwd: string }; progress?: { state: ChatState; at: number; question?: string } }
+type Card = { chat: { sessionId: string; name?: string; cwd: string; project?: string }; progress?: { state: ChatState; at: number; question?: string } }
 export type Today = { done: string[]; needs: { name: string; question?: string }[]; working: string[]; openCostUsd?: number; tokens?: number; jev?: { runs: number; costUsd: number } }
 
 const dayKey = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
-const nameOf = (c: Card) => c.chat.name || c.chat.cwd.split(/[\\/]/).pop() || c.chat.sessionId.slice(0, 8)
+const nameOf = (c: Card) => c.chat.name || projectName(c.chat) || c.chat.sessionId.slice(0, 8)
 
 /**
  * tokens: today's input, output and cache writes from the usage history (cache reads would dwarf them).

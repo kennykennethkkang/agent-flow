@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react'
 import type { AwsProfile, AwsStatus, ChatRow, HubState, WebApp, WebLogin } from '@/lib/hub-types'
 import type { HubCommand } from '@/lib/vscode-bridge'
+import { projectName } from '@/lib/archive'
 import { caps, panel, repoOf } from './look'
 import { Pick } from './gear'
 
@@ -245,7 +246,7 @@ function Profile({ p, hub, send, users, askedAt, onDelete, problem }: { p: AwsPr
           {!old && <Status s={p.status} />}
         </span>
         {detail && <span title={detail} style={mono}>{detail}</span>}
-        {users.length > 0 && <span style={quiet}>Used by {users.map(c => c.name || repoOf(c.cwd)).join(', ')}</span>}
+        {users.length > 0 && <span style={quiet}>Used by {users.map(c => c.name || projectName(c)).join(', ')}</span>}
         {!old && p.status !== 'signed-in' && <Browser hub={hub} value={chrome} onChange={setChrome} label={`Browser for signing in to ${p.name}`} />}
         {refused && <span role="alert" style={{ fontSize: 12, color: 'var(--hub-red)', overflowWrap: 'anywhere' }}>{refused}</span>}
       </span>
