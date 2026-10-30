@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import assert from 'node:assert/strict'
-import { devCommand, devHome, devLink, devRows, knownDev, offArgs, serveArgs, servedPorts } from '../src/hub/dev'
+import { awakeArgs, devCommand, devHome, devLink, devRows, knownDev, offArgs, serveArgs, servedPorts } from '../src/hub/dev'
 
 describe('dev button', () => {
   it('runs the dev script with the package manager its lockfile names', () => {
@@ -82,5 +82,13 @@ describe('dev button', () => {
     assert.equal(knownDev(rows, '/r/QR-Test/../Armasu'), undefined)
     assert.equal(knownDev(rows, '/etc'), undefined)
     assert.equal(knownDev(undefined, '/r/QR-Test'), undefined)
+  })
+})
+
+describe('keep awake', () => {
+  it('lives as long as VS Code, not the extension host, so an extension update or reload keeps it on', () => {
+    assert.deepEqual(awakeArgs(4242), ['-dis', '-w', '4242'])
+    // The extension host is a child of the VS Code app process.
+    assert.deepEqual(awakeArgs(), ['-dis', '-w', String(process.ppid)])
   })
 })

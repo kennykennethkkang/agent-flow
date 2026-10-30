@@ -110,8 +110,11 @@ export async function serve(port: number, https: boolean, on: boolean): Promise<
   if (bin) await run(bin, on ? serveArgs(port, https) : offArgs(port, https), 15000)
 }
 
-// Keep awake: one caffeinate for every window, found through its pid file. -w ends it with the extension host that started it.
+// Keep awake: one caffeinate for every window, found through its pid file.
 const AWAKE_FILE = path.join(DIR, 'awake.pid')
+
+// -w on the VS Code app (the extension host's parent), not the host: an extension update restarts the host.
+export const awakeArgs = (owner = process.ppid) => ['-dis', '-w', String(owner)]
 
 export async function awakePid(): Promise<number | undefined> {
   const pid = Number(await fs.promises.readFile(AWAKE_FILE, 'utf8').catch(() => ''))
@@ -137,7 +140,7 @@ async function toggleAwake(on: boolean): Promise<string | undefined> {
     return undefined
   }
   if (pid) return undefined
-  const child = spawn('caffeinate', ['-dis', '-w', String(process.pid)], { stdio: 'ignore' })
+  const child = spawn('caffeinate', awakeArgs(), { stdio: 'ignore' })
   // Without a listener a spawn error would crash the extension host.
   child.on('error', () => fs.rmSync(AWAKE_FILE, { force: true }))
   if (!child.pid) return 'caffeinate did not start'
