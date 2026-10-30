@@ -7,12 +7,6 @@
    "at": 1793353577294
   },
   {
-   "id": "6038dc87",
-   "text": "Restart the phone app on any changed bundle, not only a newer version: ensureWeb in extension/src/hub/local.ts gates the stale check on newerVersion, so reinstalling the same 0.18.0 leaves 3131 on the old build until restarted by hand",
-   "at": 1793354416904,
-   "from": "b718000f-33f6-4cca-9248-d63589fd2902"
-  },
-  {
    "id": "0ab0326a",
    "text": "If a send fails again, tell me which chat it was. Its session file will pin down the cause.",
    "at": 1793354441985,
@@ -28,9 +22,16 @@
  "removed": {
   "4323189c": 1793339057827,
   "2af925c8": 1793349145205,
-  "1690da63": 1793349332652
+  "1690da63": 1793349332652,
+  "6038dc87": 1793354505734
  },
  "ticked": [
+  {
+   "id": "6038dc87",
+   "text": "Restart the phone app on any changed bundle, not only a newer version: ensureWeb in extension/src/hub/local.ts gates the stale check on newerVersion, so reinstalling the same 0.18.0 leaves 3131 on the old build until restarted by hand",
+   "at": 1793354505734,
+   "from": "b718000f-33f6-4cca-9248-d63589fd2902"
+  },
   {
    "id": "2af925c8",
    "text": "Commit agent-flow and claude-mods. In claude-mods the changes are `README.md`, `kit/agents/*`, `kit/kit.mjs`, `kit/kit.test.mjs`, `kit/rc-servers.mjs`, `kit/rul",
