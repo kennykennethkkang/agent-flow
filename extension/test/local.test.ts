@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { parseGitStatus, parseLsof, parseNetstat, parsePlan, decodeProjectDir, installed, pluginMcp, projectInventory, projectContext } from '../src/hub/local'
+import { parseGitStatus, parseLsof, parseNetstat, parsePlan, decodeProjectDir, installed, libraryInventory, pluginMcp, projectInventory, projectContext, syncLibrary } from '../src/hub/local'
 
 describe('local readers', () => {
   it('reads plan tasks and their boxes', () => {
@@ -176,5 +176,31 @@ describe('project skills, assets and context', () => {
     assert.doesNotMatch(c, /rule 40/)
     assert.match(c, /next, react, tailwindcss/)
     fs.rmSync(root, { recursive: true, force: true })
+  })
+})
+
+describe('design library', () => {
+  it('copies the bundled library when its stamp differs, then lists it with absolute paths', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lib-'))
+    const src = path.join(tmp, 'kit'), dir = path.join(tmp, 'home')
+    const put = (rel: string, text: string) => { fs.mkdirSync(path.dirname(path.join(src, rel)), { recursive: true }); fs.writeFileSync(path.join(src, rel), text) }
+    put('VERSION', 'v1\n')
+    put('cursor/DESIGN.md', '---\nname: x\ndescription: Warm cream editor look\n---\n')
+    put('linear.app/DESIGN.md', '# Linear\n')
+    assert.equal(await syncLibrary(src, dir), true)
+    assert.equal(await syncLibrary(src, dir), false)
+    fs.mkdirSync(path.join(dir, 'gone'))
+    fs.writeFileSync(path.join(dir, 'gone', 'DESIGN.md'), '# old')
+    put('VERSION', 'v2\n')
+    assert.equal(await syncLibrary(src, dir), true)
+    assert.equal(fs.existsSync(path.join(dir, 'gone')), false)
+    const got = await libraryInventory(dir)
+    assert.deepEqual(got, [
+      { kind: 'asset', name: 'cursor', enabled: true, source: 'library', path: path.join(dir, 'cursor', 'DESIGN.md'), description: 'Warm cream editor look' },
+      { kind: 'asset', name: 'linear.app', enabled: true, source: 'library', path: path.join(dir, 'linear.app', 'DESIGN.md'), description: 'Linear' },
+    ])
+    assert.equal(await syncLibrary(path.join(tmp, 'none'), dir), false)
+    assert.deepEqual(await libraryInventory(path.join(tmp, 'none')), [])
+    fs.rmSync(tmp, { recursive: true, force: true })
   })
 })

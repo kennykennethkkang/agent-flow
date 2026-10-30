@@ -56,7 +56,7 @@ export type Installed = { kind: 'mod' | 'plugin' | 'skill' | 'role' | 'preset' |
 /** assets: design references by project-relative path, named to the chat in its system note. */
 export type ChatProfile = { plugins: Record<string, boolean>; skills: Record<string, boolean>; assets?: Record<string, boolean> }
 /** flagged: plugins never turned on by a pick. pick: the last hub-pick-tools answer, for its goal. chats: saved profiles by session id. */
-export type ToolsState = { flagged: string[]; pick: { goal: string; profile: ChatProfile } | null; chats: Record<string, ChatProfile> }
+export type ToolsState = { flagged: string[]; pick: { goal: string; folder?: string; profile: ChatProfile } | null; chats: Record<string, ChatProfile> }
 export type Connection = { kind: 'mcp' | 'app' | 'project' | 'window' | 'repo'; name: string; status: 'on' | 'off' | 'error'; detail?: string }
 
 export type HubState = {
@@ -106,6 +106,8 @@ export type HubState = {
   thisWindow?: string
   /** The Git panel's repo: the one holding the chat hub-changes asked for. */
   repo?: RepoView | null
+  /** The to-do list by project folder (todo.ts); an older extension sends none. */
+  todos?: Record<string, TodoList>
 }
 
 /** A palette key, not a hex: the panel picks the theme's shade. */
@@ -117,14 +119,20 @@ export type ChangedFile = { path: string; added: number; removed: number; status
 export type Changes = { sessionId: string; cwd: string; files: ChangedFile[]; at: number }
 /** One file git status lists, relative to the repo root. from: a rename's old path. */
 export type RepoFile = { path: string; status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'; from?: string }
-export type GitOp = 'sync' | 'commit' | 'commit-push' | 'switch' | 'create' | 'undo' | 'discard' | 'pr' | 'stash' | 'pop' | 'delete-branch'
+export type GitOp = 'sync' | 'commit' | 'commit-push' | 'switch' | 'create' | 'undo' | 'discard' | 'pr' | 'stash' | 'pop' | 'delete-branch' | 'rerun'
 /** sync: the one sync button (Publish branch, Pull N, Push N or Fetch). github: the repo's page, from the branch's remote (origin by default). pr: the branch's open PR when gh can tell. busy: the op running now; result: the last one's outcome. */
 export type RepoView = {
   sessionId: string; name: string; branch?: string; upstream?: string; ahead: number; behind: number; files: RepoFile[]; branches: string[]
   sync: { kind: 'publish' | 'pull' | 'push' | 'fetch'; label: string }
-  log: { hash: string; subject: string; when: string }[]; stashes: number; github?: string; pr?: { url: string; state: string; title: string }
+  log: { hash: string; subject: string; when: string }[]; stashes: number; github?: string
+  pr?: { url: string; state: string; title: string; number?: number; additions?: number; deletions?: number; base?: string }
+  /** Against the PR's base (or origin/HEAD's): behind, conflicted file count, up to 5 conflicts with one line pair each (undefined: git < 2.38), the last 8 commits on both sides. by and author: You for my own. */
+  merge?: { base: string; behind: number; files: number; conflicts?: { path: string; by: string; line?: number; ours?: string; theirs?: string }[]; commits: { hash: string; author: string; at: number }[] }
+  /** The branch's newest GitHub Actions run, when gh can tell. step: a failed job's first failed step. */
+  ci?: CiRun
   busy?: GitOp; result?: { text: string; ok: boolean; at: number }; at: number
 }
+export type CiRun = { id: number; workflow: string; status: string; conclusion?: string; url: string; sha: string; at: number; jobs: { name: string; status: string; conclusion?: string; step?: string }[] }
 export type NoteSearch = { q: string; hits: { sessionId: string; snippet: string }[] }
 
 /** The settings behind the Keep working card. A full chat always continues in a fresh chat: onFull stays for usage mods that still ask. */
@@ -134,7 +142,7 @@ export type KeepSetting = 'autoCompactEnabled' | 'autoCompactWindow' | 'autoCont
 export type SettingKey = KeepSetting | 'remoteControlAtStartup' | 'agentPushNotifEnabled' | 'inputNeededNotifEnabled' | 'model' | 'effortLevel' | 'tui' | 'statusLine'
 export type ClaudeControls = { model?: 'fable' | 'opus' | 'sonnet' | 'haiku'; effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; tui: 'default' | 'fullscreen'; statusLine: boolean; push: boolean; needInput: boolean }
 /** Switchboard's own switches, kept in VS Code's globalState. idleMinutes null: never hide. */
-export type SwitchboardControls = { hooks: boolean; statusBar: boolean; idleMinutes: number | null; brief: boolean; askBrain: boolean; syncRules: boolean }
+export type SwitchboardControls = { hooks: boolean; statusBar: boolean; idleMinutes: number | null; brief: boolean; askBrain: boolean; syncRules: boolean; accessNote: boolean; name: string }
 export type SwitchboardKey = keyof SwitchboardControls
 /** rulesNote: what the last rules and roles sync did, one line. */
 export type Controls = { claude: ClaudeControls; switchboard: SwitchboardControls; statusLineReady: boolean; rulesNote?: string }
@@ -152,7 +160,7 @@ export type AiStatus = { id: AiId; name: string; installed: boolean; detail?: st
 export type StarredChat = { sessionId: string; ai: AiId; name: string; cwd: string; starredAt: number; live: boolean; chain?: string; digest: { lastPrompt?: string; note?: string; resume: string; updatedAt?: number } }
 /** A chat closed by a handoff, shown under History. origin: its chain's first chat's name; version: 1 for the origin. note: the handoff note it wrote. */
 export type ArchivedChat = { sessionId: string; ai: AiId; name: string; origin: string; version: number; cwd: string; project: string; note?: string; startedAt?: number; archivedAt: number }
-/** Where a chat is: working, done (finished with a commit message or every task; almost done while its standup lists Left items), needs you (a question), idle (stopped, work open). */
+/** Where a chat is: working, done (finished with a commit message or every task; almost done while a request is not covered), needs you (a question), idle (stopped, work open). */
 export type ChatState = 'working' | 'done' | 'needs-you' | 'idle'
 /** One subagent run, keyed by its agent id (the role when a payload has none). */
 export type RoleStep = { id: string; role: string; state: 'active' | 'done'; startedAt: number }
@@ -163,13 +171,28 @@ export type TaskRow = { id: string; subject: string; status: 'pending' | 'in_pro
 export type BgJob = { id: string; label?: string; task?: string; startedAt: number }
 /** One tool call for the picture: role is "lead" for the main chat, else the subagent type. target: the file, pattern or command it touched, cut short. */
 export type ToolCall = { tool: string; target?: string; role: string; at: number }
-export type ChatProgress = { sessionId: string; cwd: string; state: ChatState; roles: RoleStep[]; tasks: TaskRow[]; question?: string; commit?: string; startedAt: number; at: number; /** The newest tool calls, oldest first, at most 8. */ tools?: ToolCall[]; /** Subagents still running, by agent id (or role); they outlive the chat's Stop. */ running?: string[]; /** The lead's turn ended while some still ran. */ waiting?: boolean; /** Background shells and monitors the lead started, until their task-notification. */ jobs?: BgJob[]; /** The lead's last turn ended with a commit block or every task done; Done once nothing runs. */ finishing?: true; /** When it last reached Done. */ finishedAt?: number; /** The prompt the terminal shows, while it waits. */ ask?: Ask; /** Every prompt waiting, oldest (ask) first. */ asks?: Ask[]; /** The lead's last turn died on an API error (StopFailure), until it makes real progress. */ limited?: { at: number; error: string }; /** The standup in the lead's last message; Left items keep a done chat almost done. */ report?: Report; /** Kenneth's own prompts in this chat, newest last, at most 8. */ asked?: string[]; /** Jev's score per asked item (0 to 1, null: no answer) for whether Done covers it. */ covered?: Array<number | null> }
+export type ChatProgress = { sessionId: string; cwd: string; state: ChatState; roles: RoleStep[]; tasks: TaskRow[]; question?: string; commit?: string; startedAt: number; at: number; /** The newest tool calls, oldest first, at most 200. */ tools?: ToolCall[]; /** Subagents still running, by agent id (or role); they outlive the chat's Stop. */ running?: string[]; /** The lead's turn ended while some still ran. */ waiting?: boolean; /** Background shells and monitors the lead started, until their task-notification. */ jobs?: BgJob[]; /** The lead's last turn ended with a commit block or every task done; Done once nothing runs. */ finishing?: true; /** When it last reached Done. */ finishedAt?: number; /** The prompt the terminal shows, while it waits. */ ask?: Ask; /** Every prompt waiting, oldest (ask) first. */ asks?: Ask[]; /** The lead's last turn died on an API error (StopFailure), until it makes real progress. */ limited?: { at: number; error: string }; /** The standup in the lead's last message; its Left items go to the to-do. */ report?: Report; /** Kenneth's own prompts in this chat, newest last, at most 8. */ asked?: string[]; /** Jev's score per asked item (0 to 1, null: no answer) for whether Done covers it. */ covered?: Array<number | null>; /** The newest test run any role made, from its Bash hook. */ tests?: TestRun }
+/** A test command's outcome. failed, total, first: parsed from its output when it says; tail: its last 8 lines. */
+export type TestRun = { command: string; ok: boolean; at: number; failed?: number; total?: number; first?: string; tail?: string[] }
 /** A standup's Done and Left items, cut short. */
 export type Report = { done: string[]; left: string[] }
+/** Future work. chat: in progress there; from: the chat that left or added it; before: the id of the item it must precede. */
+export type TodoItem = { id: string; text: string; at: number; chat?: string; /** The machine that started chat. */ host?: string; from?: string; before?: string }
+/** How a project's lists sync: synced (private repo or opted in), local only (why), or failing (the last error). canSync: a git repo with an origin. remote: the unreadable remote list's commit, which Replace leases on. */
+export type TodoSync = { state: 'synced' | 'local' | 'failing'; why?: string; canSync?: boolean; optIn?: boolean; remote?: string }
+/** An item a finished chat's quick model call ticked off (by: that chat), kept so the user can put it back. */
+export type TickedItem = Pick<TodoItem, 'id' | 'text' | 'at' | 'from' | 'before'> & { by: string }
+export type TodoList = { todo: TodoItem[]; sync?: TodoSync; /** Newest first, at most 10. */ ticked?: TickedItem[] }
+/** todo.json on refs/switchboard/todo; removed: tombstones by id (`<id>.back` for a ticked item put back), kept so a merge never brings one back. */
+export type TodoDoc = TodoList & { version: 1; removed: Record<string, number> }
 /** One AskUserQuestion question; options in the terminal's order. */
 export type AskQuestion = { header?: string; question: string; options: string[]; multiSelect?: boolean }
 /** A prompt in the chat's terminal and its choices in order. id: a stale answer is refused. preview: what the tool will run, cut short. */
-export type Ask = { id: string; kind: 'permission' | 'question'; tool: string; preview?: string; options: string[]; questions?: AskQuestion[]; /** Raised by a subagent, so the lead's own calls leave it. */ sub?: true }
+export type Ask = { id: string; kind: 'permission' | 'question'; tool: string; preview?: string; options: string[]; questions?: AskQuestion[]; /** Raised by a subagent, so the lead's own calls leave it. */ sub?: true; /** From the switchboard ask tool: answered through the hub, not keystrokes. */ via?: 'hub' }
+/** Typed text for a question's Other, with a multiSelect question's ticked options. */
+export type OtherPick = { picks?: number[]; other: string }
+/** An answer: an option index per question, several for a multiSelect one, or Other text. */
+export type Choice = Array<number | number[] | OtherPick>
 /** A `claude remote-control` server for a folder, so the Claude app can start chats there. */
 export type RcServer = { folder: string; name: string; on: boolean }
 

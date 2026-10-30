@@ -9,7 +9,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import * as http from 'node:http'
 import { spawn } from 'node:child_process'
-import { getHookScriptContent } from '../src/discovery'
+import { getHookScriptContent, hookCommand } from '../src/discovery'
 
 // Counts only the owner's post; mirror copies have their own test below.
 const listen = (hits: string[], name: string) => new Promise<http.Server>(resolve => {
@@ -123,4 +123,9 @@ test('a frozen mirror window holds the hook up for a short timeout only', async 
     frozen.close()
     fs.rmSync(home, { recursive: true, force: true })
   }
+})
+
+test('hook command uses forward slashes on Windows, so the hook shell keeps the paths', () => {
+  assert.equal(hookCommand('C:\\Program Files\\nodejs\\node.exe', 'C:\\Users\\k\\.claude\\agent-flow\\hook.js', 'win32'), '"C:/Program Files/nodejs/node.exe" "C:/Users/k/.claude/agent-flow/hook.js"')
+  assert.equal(hookCommand('/usr/local/bin/node', '/h/hook.js', 'darwin'), '"/usr/local/bin/node" "/h/hook.js"')
 })

@@ -21,7 +21,7 @@ export function DevRows({ dev, tailscale, isVSCode, send }: { dev: DevProject[];
   }
   return (
     <section aria-label="Dev servers" style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
-      <h3 style={caps}><span>Dev</span>{tailscale === false && <span>No Tailscale: this Mac only</span>}</h3>
+      <h3 style={caps}><span>Dev servers</span>{tailscale === false && <span>No Tailscale: this Mac only</span>}</h3>
       <ul role="list" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 6 }}>
         {dev.map(d => {
           const openable = isVSCode || onMac() || !!d.link

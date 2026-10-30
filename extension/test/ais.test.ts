@@ -3,7 +3,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { AIS, chatTerminal, closeChatTerminal, codexPaste, codexReady, codexRow, isCodexCommand, lastCodexPrompt, rolloutLines } from '../src/hub/ais'
+import { AIS, chatTerminal, pickCli, closeChatTerminal, codexPaste, codexReady, codexRow, isCodexCommand, lastCodexPrompt, rolloutLines } from '../src/hub/ais'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -150,5 +150,14 @@ describe('chatTerminal', () => {
     assert.equal(await chatTerminal(99, terms, async () => 11), terms[1])
     assert.equal(await chatTerminal(99, terms, async () => 7), undefined)
     assert.equal(await chatTerminal(99, terms, async () => 0), undefined)
+  })
+})
+
+describe('pickCli', () => {
+  it('takes which\'s line, and on Windows the runnable one where lists', () => {
+    assert.equal(pickCli('/opt/homebrew/bin/gh\n', 'darwin'), '/opt/homebrew/bin/gh')
+    assert.equal(pickCli('C:\\npm\\codex\r\nC:\\npm\\codex.cmd\r\n', 'win32'), 'C:\\npm\\codex.cmd')
+    assert.equal(pickCli('C:\\Program Files\\GitHub CLI\\gh.exe\r\n', 'win32'), 'C:\\Program Files\\GitHub CLI\\gh.exe')
+    assert.equal(pickCli('', 'win32'), undefined)
   })
 })

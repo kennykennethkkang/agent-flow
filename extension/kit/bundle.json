@@ -1,4 +1,34 @@
 {
-  "rulesVersion": "2026-10-28T10:38:34Z",
-  "history": {}
+  "rulesVersion": "2026-10-30T07:06:46Z",
+  "generic": true,
+  "history": {
+    "Explore.md": [
+      "aac11e62f278",
+      "24699a382056"
+    ],
+    "designer.md": [
+      "df4330c3a43e",
+      "7bdfac1ac0fc"
+    ],
+    "engineer.md": [
+      "f067ddefd984",
+      "395696df58ef"
+    ],
+    "growth.md": [
+      "8f83534c5908",
+      "6e58bbe4e024"
+    ],
+    "ops.md": [
+      "edeaaf2febe5",
+      "37dc9bb5ef37"
+    ],
+    "qa.md": [
+      "116e389dea0a",
+      "1819be5e3713"
+    ],
+    "researcher.md": [
+      "ab8bfc5bda95",
+      "8311cf492d2c"
+    ]
+  }
 }

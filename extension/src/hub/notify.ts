@@ -1,6 +1,6 @@
 /**
  * What Kenneth sees when a chat finishes or asks something: a VS Code notification,
- * a macOS one with a sound, and on Done the commit message in Source Control. Best effort:
+ * a macOS one with a sound (a toast on Windows), and on Done the commit message in Source Control. Best effort:
  * a failure here never touches the chat. The phone push comes from the chat itself (rules.md).
  */
 import * as vscode from 'vscode'
@@ -9,16 +9,16 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { hub } from './hub-service'
+import { foldPathCase } from '../fs-utils'
 import { focusChat } from './actions'
-import { canPrefill, doneText, notifyStep, plainText, todayText } from './progress'
+import { canPrefill, desktopNotice, doneText, notifyStep, todayText } from './progress'
 import type { ChatProgress, ChatState } from './types'
 
 const titleOf = (p: ChatProgress) => hub.get().chats.find(c => c.sessionId === p.sessionId)?.name ?? p.cwd.split(/[\\/]/).pop() ?? 'A chat'
 
 function mac(title: string, text: string): void {
-  if (process.platform !== 'darwin') return
-  const q = (s: string) => JSON.stringify(plainText(s))
-  execFile('osascript', ['-e', `display notification ${q(text)} with title ${q('Switchboard')} subtitle ${q(title)} sound name "Glass"`], () => {})
+  const n = desktopNotice(title, text)
+  if (n) execFile(n.cmd, n.args, { env: { ...process.env, ...n.env }, windowsHide: true, timeout: 15_000 }, () => {})
 }
 
 // Repo root to the message Switchboard last put in its box; anything else there is Kenneth's.
@@ -30,7 +30,7 @@ const notified = new Map<string, string>()
 function prefill(cwd: string, message: string): void {
   try {
     const git = vscode.extensions.getExtension<{ getAPI(v: 1): { repositories: { rootUri: vscode.Uri; inputBox: { value: string } }[] } }>('vscode.git')?.exports?.getAPI(1)
-    const repo = git?.repositories.filter(r => cwd === r.rootUri.fsPath || cwd.startsWith(r.rootUri.fsPath + '/')).sort((a, b) => b.rootUri.fsPath.length - a.rootUri.fsPath.length)[0]
+    const repo = git?.repositories.filter(r => { const c = foldPathCase(cwd), root = foldPathCase(r.rootUri.fsPath); return c === root || c.startsWith(root + path.sep) }).sort((a, b) => b.rootUri.fsPath.length - a.rootUri.fsPath.length)[0]
     if (!repo || !canPrefill(repo.inputBox.value, written.get(repo.rootUri.fsPath))) return
     repo.inputBox.value = message
     written.set(repo.rootUri.fsPath, message)

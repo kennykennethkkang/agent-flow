@@ -10,6 +10,8 @@ esbuild.js
 tsconfig.json
 **/*.ts
 !dist/**
+# The bundled mods run from their .ts hooks
+!kit/mods/**
 .next/**
 # Stray logs and test leftovers never ship
 *.jsonl

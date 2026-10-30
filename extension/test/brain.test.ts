@@ -98,6 +98,13 @@ describe('brain brief', () => {
     assert.match(text, /\[removed\]/)
   })
 
+  it('lists the project\'s open to-do items with their ids, never another project\'s', () => {
+    const todos = { '/w/Armasu': { todo: [{ id: 'ab12cd34', text: 'Add CSV export', at: 1 }] }, '/w/agent-flow': { todo: [{ id: 'ff00ff00', text: 'Far item', at: 1 }] } }
+    const text = brief(state([chat('me', '/w/Armasu')], { todos }), '/w/Armasu/app', 'me', NOW)
+    assert.match(text, /Open to-do[^\n]*todo_done[^\n]*\n- ab12cd34: Add CSV export/)
+    assert.doesNotMatch(text, /ff00ff00/)
+  })
+
   it('stays under 1,200 characters', () => {
     const many = Array.from({ length: 40 }, (_, i) => chat(`s${i}`, '/w/Armasu', { prompt: 'x'.repeat(200), file: `/w/Armasu/f${i}.ts`, fileAt: NOW }))
     assert.ok(brief(state(many, { plan, servers }), '/w/Armasu', 'me', NOW).length <= 1200)

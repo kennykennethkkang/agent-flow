@@ -13,7 +13,7 @@ export const ipv4s = () => Object.values(os.networkInterfaces()).flat().flatMap(
 export const phoneCode = (secret: string) => String(crypto.createHmac('sha256', secret).update('switchboard-code').digest().readUInt32BE(0) % 1e6).padStart(6, '0')
 
 // VS Code's PATH often lacks /usr/local/bin; the Mac App Store app keeps its CLI inside the bundle.
-const TS_BINS = ['/usr/local/bin/tailscale', '/opt/homebrew/bin/tailscale', '/usr/bin/tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale']
+const TS_BINS = ['/usr/local/bin/tailscale', '/opt/homebrew/bin/tailscale', '/usr/bin/tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale', 'C:\\Program Files\\Tailscale\\tailscale.exe']
 export const tailscaleBin = () => TS_BINS.find(b => fs.existsSync(b))
 
 // Only plain DNS labels, since a name ends up in Host checks and links.

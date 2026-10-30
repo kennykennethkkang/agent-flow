@@ -1,0 +1,8 @@
+{
+  "name": "paid-guard",
+  "version": "0.2.0",
+  "description": "Asks before a tool call that spends money: Bland, OpenRouter, NewBlack, paid shop searches, Gemini, AWS changes",
+  "author": {
+    "name": "Kenneth Kang"
+  }
+}

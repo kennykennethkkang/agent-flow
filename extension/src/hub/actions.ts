@@ -15,18 +15,19 @@ import { AIS, chatTerminal, cliPath, codexPaste, codexReady } from './ais'
 import { quickAsk, withBrief } from './brain'
 import { rulesState, withPointer } from './rules'
 import { accountsNote, readLinks, readLogins } from './logins'
-import { awsBinary, profileFor, readPrefs, validProfileName, writeOpenChrome, writePrefs } from './aws'
-import { chainBase, chainVersion, cloneTarget, freshPrompt, inWorkspace, labelNote, newChatCommand, nextChainName, stillRunning } from './projects'
-import { insideCwd, projectContext, projectInventory, safeFile } from './local'
+import { awsBinary, chromeCall, profileFor, readPrefs, validProfileName, writeOpenChrome, writePrefs } from './aws'
+import { SHELL, chainBase, chainVersion, cloneTarget, freshPrompt, inWorkspace, labelNote, newChatCommand, nextChainName, stillRunning } from './projects'
+import { insideCwd, libraryInventory, projectContext, projectInventory, safeFile } from './local'
 import { matchCodexStarts, recordArchive, recordChain, type CodexStart } from './chains'
-import { RC_NAME, rcRunning, rcServerCommand } from './sessions'
+import { RC_NAME, rcRunning, rcRunningNow, rcServerCommand } from './sessions'
 import { titleFor } from './title'
-import { FLAGGED, PICK_MS, cleanProfile, pickProfile, readProfiles, saveProfile, toolsNote } from './tools'
+import { moveTodoChat } from './todo'
+import { KEY_ENV, setupState, setupSteps, type SetupKit } from './setup'
+import { FLAGGED, PICK_MS, chatSettings, cleanProfile, defaultProfile, handoffSettings, pickProfile, nameNote, readProfiles, saveProfile, startProfile, toolsNote } from './tools'
 import { createLogger } from '../logger'
 
 const log = createLogger('Tools')
 
-const SHELL = process.platform === 'win32' ? 'powershell' : 'posix'
 // A window opened by `code` from inside a chat inherits Claude's child marker, and a chat started
 // under it saves no transcript (no --resume, no handoff). Chat terminals drop it; null unsets.
 const OWN_CHAT = { CLAUDE_CODE_CHILD_SESSION: null }
@@ -110,16 +111,18 @@ export async function cloneProject(repo: string, newWindow: boolean, root: strin
 /**
  * A chat in its own terminal, named by a short title made from the goal (the project's name
  * with no goal). Remote Control gets the same title: its name outranks --name. Answers why it could not start.
+ * id: the Claude chat's session id, when the caller tracks it (a To-do item).
+ * noRemote: Remote Control stays off even when it is on at startup, so a To-do run stays in VS Code.
  */
-export async function newChat(folder: string, text: string | undefined, remote: boolean, branch: string | undefined, ai: AiId = 'claude', tools?: ChatProfile): Promise<string | undefined> {
+export async function newChat(folder: string, text: string | undefined, remote: boolean, branch: string | undefined, ai: AiId = 'claude', tools?: ChatProfile, id?: string, noRemote = false): Promise<string | undefined> {
   const project = hub.get().projects.find(p => p.path === folder)
   if (!project) return `${folder} is not in the project list yet; open Switchboard once and try again`
   const goal = text?.trim()
   const inv = ai === 'claude' && hub.get().installed.length ? await chatInventory(folder) : []
-  // A Claude chat with a goal gets its own tool set: the one sent, else one picked now. Codex keeps its own.
+  // Every Claude chat gets its own tool set, never the user's settings.json. Codex keeps its own.
   const [title, profile] = await Promise.all([
     goal ? titleFor(goal, quickAsk) : project.name,
-    inv.length ? (tools ? cleanProfile(tools, inv) : goal ? pickFor(goal, inv, folder) : undefined) : undefined,
+    startProfile(inv, tools, goal, g => pickFor(g, inv, folder)),
   ])
   // Codex has no hook to read the brief from, so it rides in front of the first message.
   const first = withPointer(ai === 'claude' ? '' : withBrief(hub.get(), folder, text), rulesState.ready[ai], rulesState.kit)
@@ -133,10 +136,10 @@ export async function newChat(folder: string, text: string | undefined, remote: 
   }
   let command: string
   try {
-    const sessionId = profile ? crypto.randomUUID() : undefined
-    const settings = sessionId && profile ? saveProfile(sessionId, profile) : undefined
+    const sessionId = id ?? (profile ? crypto.randomUUID() : undefined)
+    const settings = chatSettings(sessionId, profile, noRemote)
     if (sessionId && profile) setChatProfile(sessionId, profile)
-    command = newChatCommand({ textFile: messageFile(withPointer(text ?? '', rulesState.ready.claude, rulesState.kit)), name: title, remote: remote ? title : undefined, branch, sessionId, settings, system: [settings && profile ? toolsNote(profile) : '', accountsNote(readLogins(), readLinks(), folder, hub.get().signIns.chrome) ?? ''].filter(Boolean).join(' ') || undefined }, SHELL)
+    command = newChatCommand({ textFile: messageFile(withPointer(text ?? '', rulesState.ready.claude, rulesState.kit)), name: title, remote: remote ? title : undefined, branch, sessionId, settings, system: [settings && profile ? toolsNote(profile) : '', myName(), accountsNote(readLogins(), readLinks(), folder, hub.get().signIns.chrome) ?? ''].filter(Boolean).join(' ') || undefined }, SHELL)
   } catch (err) {
     return (err as Error).message
   }
@@ -172,18 +175,20 @@ export function stopDev(project: string): boolean {
 }
 
 /** The user's plugins and skills plus the project's own skills and design references. */
-const chatInventory = async (folder: string | undefined) => [...hub.get().installed, ...(folder ? await projectInventory(folder).catch(() => []) : [])]
+const chatInventory = async (folder: string | undefined) => [...hub.get().installed, ...(folder ? await projectInventory(folder).catch(() => []) : []), ...await libraryInventory()]
 const pickFor = async (goal: string, inv: Installed[], folder?: string) =>
   pickProfile(goal, inv, quickAsk, PICK_MS, why => log.warn(`Tool pick fell back to the default set (${why})`), folder ? await projectContext(folder).catch(() => '') : '')
+
+const myName = () => nameNote(hub.get().controls.switchboard.name) ?? ''
 
 const toolsState = () => hub.get().tools ?? { flagged: FLAGGED, pick: null, chats: {} }
 /** Shows a chat's saved profile in the panel at once, before the next refresh reads it back. */
 export const setChatProfile = (sessionId: string, p: ChatProfile) => hub.set({ tools: { ...toolsState(), chats: { ...toolsState().chats, [sessionId]: p } } })
 
-/** The New chat form's pick for a goal, shown as chips before Start. */
-export async function pickTools(goal: string): Promise<void> {
-  const profile = await pickFor(goal, hub.get().installed)
-  hub.set({ tools: { ...toolsState(), pick: { goal, profile } } })
+/** The New chat form's pick for a goal, shown as chips before Start; with the folder, its project skills and design references too. */
+export async function pickTools(goal: string, folder?: string): Promise<void> {
+  const profile = await pickFor(goal, await chatInventory(folder), folder)
+  hub.set({ tools: { ...toolsState(), pick: { goal, folder, profile } } })
 }
 
 /** A chat's tools changed in the panel: saved now, used when it is resumed. */
@@ -289,7 +294,7 @@ export async function resumeChat(sessionId: string, ai: AiId): Promise<string | 
   }
   const t = vscode.window.createTerminal({ name, cwd, env: chatEnv(cwd) })
   t.show()
-  t.sendText(AIS[ai].resumeCommand(sessionId))
+  t.sendText(AIS[ai].resumeCommand(sessionId, myName()))
   return undefined
 }
 
@@ -330,13 +335,17 @@ export async function continueInFreshChat(h: Handoff, workspace: string | undefi
   } catch (err) { void vscode.window.showWarningMessage(`Switchboard: could not label the handoff note (${(err as Error).message}).`) }
   const text = withPointer(freshPrompt(h.note), rulesState.ready[ai], rulesState.kit)
   const codex = ai === 'codex'
-  // The fresh chat keeps the old one's tool set.
+  // The fresh chat keeps the old one's tool set; one started outside Switchboard gets the defaults.
   const carried = codex ? undefined : readProfiles([h.sessionId])[h.sessionId]
-  const freshId = carried ? crypto.randomUUID() : undefined
-  let settings: string | undefined
-  try { settings = freshId && carried ? saveProfile(freshId, carried) : undefined } catch { /* starts with the user's defaults */ }
-  const tools = settings && carried ? { sessionId: freshId, settings, system: toolsNote(carried) } : {}
-  const claude = (branch?: string) => newChatCommand({ textFile: messageFile(text), name: fresh, remote: hub.get().rc.atStartup ? fresh : undefined, branch, ...tools }, SHELL)
+    ?? (hub.get().installed.length ? defaultProfile(await chatInventory(h.cwd)) : undefined)
+  // Always an id for a Claude chat, so a To-do item in progress follows it.
+  const freshId = codex ? undefined : crypto.randomUUID()
+  // A To-do chat stays off Remote Control in every version of it.
+  let settings: string | undefined, off = false
+  try { if (freshId) ({ settings, off } = handoffSettings(h.sessionId, freshId, carried)) } catch { /* starts with the user's defaults */ }
+  const system = [settings && carried ? toolsNote(carried) : '', myName()].filter(Boolean).join(' ') || undefined
+  const tools = { ...(settings ? { settings } : {}), system }
+  const claude = (branch?: string) => newChatCommand({ textFile: messageFile(text), name: fresh, remote: hub.get().rc.atStartup && !off ? fresh : undefined, branch, sessionId: freshId, ...tools }, SHELL)
   let command = ''
   try {
     // Codex has no --name and no hook to read the brief from: the brief rides in front, the name lives in the note.
@@ -370,6 +379,7 @@ export async function continueInFreshChat(h: Handoff, workspace: string | undefi
     })
   } catch (err) { void vscode.window.showWarningMessage(`Switchboard: could not move the old chat to History (${(err as Error).message}).`) }
   if (!codex) hub.closeAfterFresh(h.sessionId, h.cwd)
+  if (freshId) void moveTodoChat(h.cwd, h.sessionId, freshId).catch(() => {})
   return true
 }
 
@@ -381,22 +391,37 @@ export function exportKit(root: string): string | undefined {
   return undefined
 }
 
+/** Set up: asks for the 21st key (empty skips), then runs the missing install steps in a terminal. The key rides in the env only. */
+export async function runSetup(ext: string): Promise<void> {
+  const key = await vscode.window.showInputBox({ title: 'Switchboard setup', prompt: '21st.dev API key for Magic (from 21st.dev/mcp). Leave empty to skip.', password: true, ignoreFocusOut: true })
+  if (key === undefined) return
+  const kit = JSON.parse(fs.readFileSync(path.join(ext, 'kit', 'setup.json'), 'utf8')) as SetupKit
+  const steps = setupSteps(kit, { ...setupState(os.homedir()), key21st: !!key.trim(), modsDir: path.join(ext, 'kit', 'mods') })
+  const plan = path.join(os.tmpdir(), 'switchboard-setup.json')
+  fs.writeFileSync(plan, JSON.stringify(steps))
+  vscode.window.terminals.find(t => t.name === 'Switchboard setup')?.dispose()
+  const t = vscode.window.createTerminal({ name: 'Switchboard setup', cwd: os.homedir(), env: key.trim() ? { [KEY_ENV]: key.trim() } : undefined })
+  t.show(true)
+  // Same line in sh, cmd and PowerShell.
+  t.sendText(`node "${path.join(ext, 'kit', 'setup-run.mjs')}" "${plan}"`)
+}
+
 /** Where the one Remote Control server runs: phone chats start here and can work in any repo under it. */
 const RC_ROOT = () => path.join(os.homedir(), 'Documents', 'GitHub')
 const RC_TERMINAL = `RC ${RC_NAME}`
 
 /** The machine's one Remote Control server, in its own long-lived terminal, unless the kit's LaunchAgent runs it. */
-export function rcServer(folder: string, on: boolean): string | undefined {
+export async function rcServer(folder: string, on: boolean): Promise<string | undefined> {
   if (folder !== RC_ROOT()) return `Remote Control runs only in ${RC_ROOT()}`
   const open = vscode.window.terminals.find(t => t.name === RC_TERMINAL)
   if (!on) {
-    if (!open && rcRunning()) return `the Remote Control server was started by the kit's LaunchAgent (com.kenneth.switchboard.rc), so turn it off there`
+    if (!open && await rcRunningNow()) return `the Remote Control server was started by the kit's login item (LaunchAgent com.kenneth.switchboard.rc, or switchboard-rc.vbs in the Windows Startup folder), so turn it off there`
     open?.sendText('\x03', false)
     open?.dispose()
     return undefined
   }
   // The kit's LaunchAgent may already run one outside VS Code; a second would clash with it.
-  if (open || rcRunning()) return undefined
+  if (open || await rcRunningNow()) return undefined
   if (!fs.existsSync(RC_ROOT())) return `no ${RC_ROOT()} folder`
   freshTerminal(RC_TERMINAL, RC_ROOT()).sendText(rcServerCommand())
   return undefined
@@ -439,7 +464,9 @@ export function openLogin(url: string, chrome: string | undefined): string | und
   if (!/^https?:\/\//.test(url)) return 'Not a web address'
   if (!chrome) { void vscode.env.openExternal(vscode.Uri.parse(url)); return undefined }
   if (!hub.get().signIns.chrome.some(c => c.dir === chrome)) return 'That Chrome profile is not in Chrome\'s list'
-  execFile(writeOpenChrome(), [url], { env: { ...process.env, SWITCHBOARD_CHROME_DIR: chrome }, timeout: 10_000 }, err => {
+  const c = chromeCall(url, chrome)
+  if (!c) return 'Chrome not found'
+  execFile(c.cmd, c.args, { timeout: 10_000, windowsHide: true }, err => {
     if (err) void vscode.window.showWarningMessage(`Switchboard: could not open Chrome (${err.message}).`)
   })
   return undefined

@@ -1,0 +1,253 @@
+/* The center picture's style switch and its four extra styles. Colors are the --hub-* tokens only.
+   Motion: transitions (they retarget mid-move), ease-out to enter, ease-in-out to move, 200 to 360 ms. */
+.ov { --ov-io: cubic-bezier(0.77, 0, 0.175, 1); display: grid; gap: 8px; min-width: 0; }
+
+.ov-seg { justify-self: start; max-width: 100%; display: flex; padding: 2px; border-radius: 9px; background: var(--hub-elev); border: 1px solid var(--hub-hair); overflow-x: auto; scrollbar-width: none; }
+.ov-seg > button { flex: 1 0 auto; border: 0; background: none; border-radius: 7px; padding: 0 10px; font: 500 12px/1 var(--hub-sans); color: var(--hub-mute); cursor: pointer; transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease; }
+.ov-seg > button[aria-checked='true'] { background: var(--hub-card); color: var(--hub-ink); box-shadow: 0 0 0 1px var(--hub-hair); }
+@media (hover: hover) and (pointer: fine) { .ov-seg > button:hover { color: var(--hub-ink); } }
+@media (max-width: 420px) { .ov-seg > button { padding: 0 7px; } }
+
+.ov-fade { min-width: 0; transition: opacity 200ms var(--hub-ease-out), transform 200ms var(--hub-ease-out); }
+@starting-style { .ov-fade:not([data-instant]) { opacity: 0; transform: translateY(4px); } }
+
+.ov-stage { container-type: inline-size; position: relative; min-width: 0; border-radius: 12px; border: 1px solid var(--hub-hair); background: var(--hub-canvas); padding: 14px; display: grid; gap: 10px; color: var(--hub-body); font: 400 13px/1.4 var(--hub-sans); }
+.ov-stage[data-paused] *, .ov-stage[data-paused] *::before, .ov-stage[data-paused] *::after { animation-play-state: paused !important; }
+.ov-empty { margin: 0; color: var(--hub-ash); }
+
+.ov-legend { margin: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; font: 400 12px/1 var(--hub-mono); color: var(--hub-mute); }
+.ov-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.ov-legend i { width: 6px; height: 6px; border-radius: 50%; background: var(--c); }
+
+/* Reveal: a callout that fades and folds open, and back shut the same way. */
+.ov-reveal { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 260ms var(--hub-ease-out), opacity 200ms ease; }
+.ov-reveal[data-on] { grid-template-rows: 1fr; opacity: 1; }
+.ov-reveal > div { overflow: hidden; min-height: 0; }
+.ov-call > span { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; color: var(--hub-ink); font: 500 14px/1.35 var(--hub-sans); overflow-wrap: anywhere; --c: var(--hub-red); background: color-mix(in srgb, var(--c) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 40%, transparent); }
+.ov-call > span[data-tone='done'] { --c: var(--hub-green); }
+.ov-call > span[data-tone='almost'] { --c: var(--hub-teal); }
+.ov-call b { font: 500 11px/1 var(--hub-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--c); }
+.ov-call code, .ov-note code { font: 400 12px/1.5 var(--hub-mono); color: var(--hub-ink); }
+
+.ov-bench { margin: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font: 400 12px/1 var(--hub-mono); color: var(--hub-ash); }
+.ov-chipb { display: inline-flex; gap: 6px; align-items: center; font: 500 12px/1 var(--hub-sans); color: var(--hub-mute); border: 1px dashed var(--hub-hair-strong); border-radius: 99px; padding: 6px 10px; }
+.ov-count { position: absolute; top: -6px; right: -10px; font: 600 10.5px/1 var(--hub-mono); padding: 3px 5px; border-radius: 99px; background: var(--hub-ink); color: var(--hub-canvas); box-shadow: 0 0 0 2px var(--hub-canvas); }
+
+/* State colors, shared: --c is the state's color. */
+[data-s='active'], [data-s='working'] { --c: var(--hub-blue); }
+[data-s='done'] { --c: var(--hub-green); }
+[data-s='almost'] { --c: var(--hub-teal); }
+[data-s='needs'] { --c: var(--hub-red); }
+[data-s='idle'] { --c: var(--hub-yellow); }
+[data-s='waiting'] { --c: var(--hub-mute); }
+[data-s='unused'] { --c: var(--hub-ash); }
+/* A role's glyph, in its state's color; a count badge pins to its corner. */
+.ov-gl { position: relative; flex: none; display: grid; place-items: center; color: var(--c, var(--hub-ash)); transition: color 240ms ease; }
+
+/* Relay */
+.ov-chain { list-style: none; margin: 0; padding: 4px 0 0; display: flex; align-items: flex-start; min-width: 0; }
+.ov-st { flex: 0 1 112px; min-width: 0; display: grid; justify-items: center; gap: 10px; text-align: center; }
+.ov-disc { position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--c); background: var(--hub-card); box-shadow: 0 0 0 1.5px var(--c);
+  transition: color 240ms ease, box-shadow 240ms ease, background-color 240ms ease, opacity 240ms ease; }
+.ov-st[data-k='lead'] .ov-disc { width: 56px; height: 56px; margin-top: -6px; margin-bottom: -6px; }
+.ov-st[data-s='unused'] .ov-disc, .ov-st[data-s='waiting'] .ov-disc { box-shadow: 0 0 0 1px var(--hub-hair-strong); background: transparent; }
+.ov-st[data-s='unused'] .ov-disc { opacity: 0.6; }
+.ov-st[data-k='you'][data-s='idle'] .ov-disc { --c: var(--hub-mute); box-shadow: 0 0 0 1px var(--hub-hair-strong); }
+.ov-st[data-s='needs'] .ov-disc { background: color-mix(in srgb, var(--hub-red) 9%, var(--hub-card)); }
+.ov-arc { position: absolute; inset: -5px; width: calc(100% + 10px); height: calc(100% + 10px); opacity: 0; transition: opacity 240ms ease; }
+.ov-arc circle { fill: none; stroke: var(--hub-blue); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 60 300; transform-origin: center; animation: ov-spin 1.6s linear infinite; }
+.ov-st[data-s='active'] .ov-arc, .ov-st[data-k='lead'][data-s='working'] .ov-arc { opacity: 1; }
+.ov-ok { position: absolute; right: -4px; bottom: -4px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--c); box-shadow: 0 0 0 2px var(--hub-canvas);
+  opacity: 0; transform: scale(0.6); transition: opacity 200ms ease, transform 240ms var(--hub-ease-out); }
+.ov-ok svg { width: 11px; height: 11px; fill: none; stroke: var(--hub-canvas); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.ov-st:not([data-k='you'])[data-s='done'] .ov-ok, .ov-st[data-s='almost'] .ov-ok { opacity: 1; transform: none; }
+.ov-lab { display: grid; gap: 3px; min-width: 0; width: 100%; }
+.ov-lab b { font: 600 13px/1.2 var(--hub-sans); color: var(--hub-ink); }
+.ov-st[data-s='unused'] .ov-lab b { color: var(--hub-mute); font-weight: 500; }
+.ov-lab small { font: 400 11px/1.3 var(--hub-mono); color: var(--hub-ash); overflow-wrap: anywhere; }
+.ov-now { font-size: 12px; color: var(--hub-body); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.ov-subs { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-top: 3px; }
+.ov-sub { display: inline-flex; align-items: center; gap: 4px; font: 500 11px/1 var(--hub-mono); color: var(--hub-mute); padding: 3px 6px; border-radius: 99px; background: var(--hub-elev); box-shadow: inset 0 0 0 1px var(--hub-hair);
+  transition: opacity 200ms var(--hub-ease-out), transform 200ms var(--hub-ease-out); }
+@starting-style { .ov-sub { opacity: 0; transform: scale(0.94); } }
+.ov-sub i { width: 6px; height: 6px; border-radius: 50%; background: var(--c, var(--hub-ash)); transition: background-color 240ms ease; }
+.ov-wire { flex: 1 1 12px; min-width: 12px; position: relative; height: 1.5px; margin-top: 22px; background: var(--hub-hair-strong); opacity: 0.6; transition: background-color 320ms ease, opacity 320ms ease; }
+.ov-wire[data-lit] { opacity: 1; background: var(--hub-ash); }
+.ov-wire[data-lit='red'] { background: var(--hub-red); }
+.ov-wire[data-lit='green'] { background: var(--hub-green); }
+.ov-wire[data-lit='teal'] { background: var(--hub-teal); }
+.ov-loop { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); white-space: nowrap; font: 500 11px/1 var(--hub-mono); color: var(--hub-red); background: var(--hub-canvas); padding: 4px 7px; border-radius: 99px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hub-red) 50%, transparent); }
+/* A packet: a full-length layer slides from one end to the other with the dot at its leading edge. */
+.ov-run { position: absolute; inset: 0; transform: translateX(-100%); animation: ov-run 720ms var(--ov-io) forwards; }
+.ov-run[data-back] { animation-direction: reverse; }
+.ov-run i { position: absolute; right: -4px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 18%, transparent); animation: ov-fade 720ms linear forwards; }
+@keyframes ov-run { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes ov-fade { 0% { opacity: 0; } 20%, 80% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes ov-spin { to { transform: rotate(360deg); } }
+.ov-pop { position: absolute; bottom: calc(100% + 8px); left: 50%; z-index: 2; pointer-events: none; white-space: nowrap; font: 500 11px/1 var(--hub-mono); padding: 4px 7px; border-radius: 6px; color: var(--hub-yellow);
+  background: color-mix(in srgb, var(--hub-yellow) 8%, var(--hub-card)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--hub-yellow) 40%, transparent); max-width: 180px; overflow: hidden; text-overflow: ellipsis;
+  animation: ov-pop 1600ms var(--hub-ease-out) forwards; }
+.ov-pop span { color: var(--hub-body); margin-left: 6px; }
+@keyframes ov-pop { 0% { opacity: 0; transform: translate(-50%, 4px) scale(0.96); } 12% { opacity: 1; transform: translate(-50%, 0); } 78% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, -4px); } }
+@container (max-width: 720px) {
+  .ov-chain { flex-direction: column; align-items: stretch; padding: 0; }
+  .ov-st { flex: none; grid-template-columns: 56px minmax(0, 1fr); justify-items: start; align-items: start; text-align: left; gap: 12px; }
+  .ov-disc { justify-self: center; }
+  .ov-st[data-k='lead'] .ov-disc { margin: 0; }
+  .ov-subs { justify-content: flex-start; }
+  .ov-wire { flex: none; width: 1.5px; height: 18px; min-width: 0; margin: 4px 0 4px 27px; }
+  .ov-run { transform: translateY(-100%); animation-name: ov-run-v; }
+  .ov-run i { right: auto; left: 50%; top: auto; bottom: -4px; margin: 0 0 0 -4px; }
+  .ov-loop { top: 50%; left: 14px; transform: translateY(-50%); }
+  .ov-pop { bottom: auto; left: calc(100% + 10px); top: 50%; animation-name: ov-pop-side; }
+}
+@keyframes ov-run-v { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+@keyframes ov-pop-side { 0% { opacity: 0; transform: translate(-4px, -50%); } 12%, 78% { opacity: 1; transform: translate(0, -50%); } 100% { opacity: 0; transform: translate(0, -50%); } }
+
+/* Lanes: label column pinned, the chart scrolls sideways inside the stage on a phone. */
+.ov-lanes { --lw: 148px; }
+.ovl-scroll { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; border-radius: 6px; }
+.ovl-scroll[data-over] { cursor: grab; }
+.ovl-scroll[data-drag] { cursor: grabbing; user-select: none; }
+.ovl-scroll:focus-visible { outline: 2px solid var(--hub-blue); outline-offset: 2px; }
+.ovl-chart { min-width: 100%; display: grid; }
+@container (max-width: 560px) { .ov-lanes { --lw: 104px; } }
+.ovl-row { display: grid; grid-template-columns: var(--lw) minmax(0, 1fr); min-height: 44px; border-top: 1px solid var(--hub-hair); }
+.ovl-axis { min-height: 30px; border-top: 0; }
+.ovl-label { position: sticky; left: 0; z-index: 2; display: flex; gap: 8px; align-items: center; min-width: 0; padding: 6px 10px 6px 8px; background: var(--hub-canvas); color: var(--c, var(--hub-ash)); box-shadow: inset 2px 0 0 transparent; transition: box-shadow 240ms ease, background-color 240ms ease, color 240ms ease; }
+.ovl-label > svg { flex: none; }
+.ovl-jump { gap: 4px; padding: 0 8px; align-items: flex-end; padding-bottom: 3px; }
+.ovl-jump button { all: unset; cursor: pointer; font: 500 11px/1 var(--hub-mono); color: var(--hub-ash); padding: 4px 6px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--hub-hair); transition: color 160ms ease, background-color 160ms ease, opacity 160ms ease; }
+@media (hover: hover) and (pointer: fine) { .ovl-jump button:hover:not(:disabled) { color: var(--hub-ink); background: var(--hub-hair); } }
+.ovl-jump button:active:not(:disabled) { transform: scale(0.96); }
+.ovl-jump button:disabled { opacity: 0.4; cursor: default; }
+.ovl-label > span { min-width: 0; display: grid; gap: 2px; }
+.ovl-label b { font: 500 13px/1.2 var(--hub-sans); color: var(--hub-ink); }
+.ovl-label small { font: 400 11px/1.2 var(--hub-mono); color: var(--hub-ash); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ovl-word { color: var(--c, var(--hub-ash)); }
+.ovl-row[data-s='active'] .ovl-label, .ovl-row[data-s='needs'] .ovl-label { box-shadow: inset 2px 0 0 var(--c); background: color-mix(in srgb, var(--c) 7%, var(--hub-canvas)); }
+.ovl-row[data-s='active'] .ovl-track, .ovl-row[data-s='needs'] .ovl-track { background: color-mix(in srgb, var(--c) 4%, transparent); }
+.ovl-row[data-s='waiting'] .ovl-label b { color: var(--hub-mute); }
+.ovl-track { position: relative; min-width: 0; overflow: clip; border-right: 1.5px solid var(--hub-hair-strong); transition: background-color 240ms ease; }
+.ov-lanes[data-chat='active'] .ovl-track { border-right-color: var(--hub-blue); }
+.ov-lanes[data-chat='needs'] .ovl-track { border-right-color: var(--hub-red); }
+.ov-lanes[data-chat='done'] .ovl-track { border-right-color: var(--hub-green); }
+.ov-lanes[data-chat='almost'] .ovl-track { border-right-color: var(--hub-teal); }
+.ovl-axis .ovl-track { overflow: visible; border-right-color: transparent !important; }
+.ovl-axis .ovl-track > span { position: absolute; bottom: 6px; font: 400 11px/1 var(--hub-mono); color: var(--hub-ash); white-space: nowrap; }
+.ovl-axis .ovl-track > span:not(.ovl-end):not(:first-child) { transform: translateX(-50%); }
+.ovl-axis .ovl-end { right: 0; color: var(--c, var(--hub-ink)); font-weight: 500; }
+.ov-lanes[data-chat='active'] .ovl-end { --c: var(--hub-blue); } .ov-lanes[data-chat='needs'] .ovl-end { --c: var(--hub-red); }
+.ov-lanes[data-chat='done'] .ovl-end { --c: var(--hub-green); } .ov-lanes[data-chat='almost'] .ovl-end { --c: var(--hub-teal); } .ov-lanes[data-chat='idle'] .ovl-end { --c: var(--hub-yellow); }
+.ovl-grid > i { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--hub-hair); opacity: 0.7; }
+.ovl-bar { position: absolute; top: 50%; min-width: 6px; border-radius: 4px; height: 22px; margin-top: -11px; display: flex; align-items: center; --c: var(--hub-green);
+  background: color-mix(in srgb, var(--c) 16%, var(--hub-card)); box-shadow: inset 2px 0 0 var(--c);
+  transition: left 400ms var(--ov-io), width 400ms var(--ov-io), background-color 240ms ease; }
+.ovl-bar[data-s='active'] { --c: var(--hub-blue); }
+.ov-lanes[data-chat='almost'] .ovl-bar[data-s='done'] { --c: var(--hub-teal); }
+.ovl-bar > span { position: sticky; left: var(--lw); max-width: calc(100% - 14px); padding-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 11.5px/1 var(--hub-sans); color: var(--hub-ink); }
+.ovl-bar > span > b { font: 600 11px/1 var(--hub-mono); color: var(--c); margin-right: 6px; }
+@starting-style { .ovl-bar { clip-path: inset(0 100% 0 0 round 4px); } }
+.ovl-bar { clip-path: inset(0 0 0 0 round 4px); transition-property: left, width, background-color, clip-path; }
+.ovl-lead { height: 4px; margin-top: -2px; box-shadow: none; background: var(--c); --c: var(--hub-ash); }
+.ov-lanes[data-chat='active'] .ovl-lead { --c: var(--hub-blue); } .ov-lanes[data-chat='needs'] .ovl-lead { --c: var(--hub-blue); }
+.ov-lanes[data-chat='done'] .ovl-lead { --c: var(--hub-green); } .ov-lanes[data-chat='almost'] .ovl-lead { --c: var(--hub-teal); } .ov-lanes[data-chat='idle'] .ovl-lead { --c: var(--hub-yellow); }
+/* The wait for an answer: one band to the end, labelled at its right edge so it reads however short it is. */
+.ovl-wait { position: absolute; top: 6px; bottom: 6px; right: 0; border-radius: 4px 0 0 4px; background: var(--hub-red-soft); box-shadow: inset 2px 0 0 var(--hub-red); }
+.ovl-wait > b { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font: 500 11px/1 var(--hub-mono); color: var(--hub-red); white-space: nowrap; background: var(--hub-canvas); padding: 3px 6px; border-radius: 4px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--hub-red) 35%, transparent); }
+.ovl-tag { position: absolute; top: 50%; transform: translateY(-50%); max-width: min(45%, 240px); font: 500 11.5px/1 var(--hub-sans); color: var(--hub-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ovl-tag > b { font: 600 11px/1 var(--hub-mono); color: var(--c); margin-right: 6px; }
+.ovl-tag[data-s='active'] { --c: var(--hub-blue); } .ovl-tag[data-s='done'] { --c: var(--hub-green); }
+.ovl-queued { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); max-width: calc(100% - 16px); font: 400 12px/1 var(--hub-sans); color: var(--hub-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ovl-loop { position: absolute; top: 2px; margin-left: -6px; font: 600 11px/1 var(--hub-mono); color: var(--hub-red); background: var(--hub-canvas); border-radius: 99px; padding: 1px 3px; z-index: 1; cursor: default; }
+/* Tool calls: faint 4px ticks on the lane's floor; a wider hit area carries the hover detail. */
+.ovl-tick { position: absolute; bottom: 0; width: 9px; height: 10px; margin-left: -4px; cursor: default; }
+.ovl-tick::before { content: ''; position: absolute; left: 4px; bottom: 2px; width: 1.5px; height: 5px; border-radius: 1px; background: var(--hub-yellow); opacity: 0.55; transition: opacity 160ms ease, height 160ms var(--hub-ease-out); }
+@media (hover: hover) and (pointer: fine) { .ovl-tick:hover::before { opacity: 1; height: 8px; } }
+@starting-style { .ovl-tick::before { opacity: 0; } }
+.ovl-key-tick::before { content: ''; display: inline-block; width: 1.5px; height: 8px; border-radius: 1px; background: var(--hub-yellow); margin-right: 6px; }
+.ovl-unused { margin: 0; font: 400 12px/1.3 var(--hub-mono); color: var(--hub-ash); }
+.ovl-commit { display: grid; gap: 4px; }
+.ovl-commit code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ovl-commit ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.ovl-commit li::marker { color: var(--hub-ash); }
+@media (prefers-reduced-motion: reduce) {
+  .ovl-bar { transition-property: background-color; }
+  @starting-style { .ovl-bar { clip-path: none; } }
+}
+
+/* Constellation */
+.ov-canvas { position: relative; height: 400px; margin: -14px -14px 0; }
+.ov-canvas canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* Deck */
+.ov-deck { gap: 8px; }
+.ov-you { margin: 0; display: flex; gap: 10px; align-items: center; color: var(--hub-mute); font-size: 13px; min-width: 0; padding: 0 2px 4px; }
+.ov-you > svg { flex: none; }
+.ov-you > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-you b { color: var(--hub-ink); font-weight: 500; }
+.ov-you > span:last-child { font: 400 11px/1 var(--hub-mono); color: var(--hub-ash); white-space: nowrap; }
+.ov-card { border-radius: 10px; background: var(--hub-surface); box-shadow: 0 0 0 1px var(--hub-hair); transition: box-shadow 240ms ease, opacity 240ms ease; }
+.ov-card[data-s='active'], .ov-card[data-s='working'] { box-shadow: 0 0 0 1px color-mix(in srgb, var(--hub-blue) 55%, transparent); }
+.ov-card[data-s='needs'] { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--hub-red) 70%, transparent); }
+.ov-card[data-s='waiting'] { opacity: 0.8; }
+.ov-hd { all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 10px; min-height: 52px; }
+.ov-hd:focus-visible { outline: 2px solid var(--hub-blue); outline-offset: 2px; }
+.ov-hd .ov-gl { width: 32px; height: 32px; border-radius: 8px; background: color-mix(in srgb, var(--c, var(--hub-ash)) 12%, transparent); transition: background-color 240ms ease, color 240ms ease, transform 160ms var(--hub-ease-out); }
+.ov-hd:active .ov-gl { transform: scale(0.94); }
+.ov-hd .ov-count { top: auto; bottom: -5px; right: -6px; }
+.ov-ttl { min-width: 0; display: grid; gap: 3px; }
+.ov-ttl > span:first-child { display: flex; gap: 8px; align-items: center; }
+.ov-ttl b { font: 600 14px/1.2 var(--hub-sans); color: var(--hub-ink); }
+.ov-ttl small { font: 400 11px/1 var(--hub-mono); color: var(--hub-ash); }
+.ov-sum { font-size: 13px; color: var(--hub-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-end { display: flex; gap: 10px; align-items: center; }
+.ov-n { font: 400 11px/1 var(--hub-mono); color: var(--hub-ash); white-space: nowrap; }
+.ov-chip { display: inline-flex; align-items: center; gap: 6px; font: 500 12px/1 var(--hub-mono); padding: 5px 8px; border-radius: 99px; white-space: nowrap; color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); transition: color 240ms ease, background-color 240ms ease; }
+.ov-chip > i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.ov-chev { width: 14px; height: 14px; fill: none; stroke: var(--hub-ash); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform 240ms var(--hub-ease-out); }
+.ov-card[data-open] .ov-chev { transform: rotate(90deg); }
+.ov-ping { display: none; width: 7px; height: 7px; border-radius: 50%; background: var(--c); flex: none; }
+.ov-card[data-s='active'] .ov-ping, .ov-card[data-s='working'] .ov-ping, .ov-card[data-s='needs'] .ov-ping { display: block; animation: ov-ping 2s var(--hub-ease-out) infinite; }
+@keyframes ov-ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 45%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
+.ov-bd { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 280ms var(--hub-ease-out); }
+.ov-card[data-open] .ov-bd { grid-template-rows: 1fr; }
+.ov-bd > div { overflow: hidden; min-height: 0; }
+.ov-in { padding: 0 12px 12px 56px; display: grid; gap: 12px; opacity: 0; transition: opacity 180ms ease; }
+.ov-card[data-open] .ov-in { opacity: 1; transition: opacity 240ms ease 60ms; }
+.ov-in h4 { margin: 0 0 6px; font: 500 11px/1 var(--hub-mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--hub-ash); display: flex; justify-content: space-between; }
+.ov-task { margin: 0; color: var(--hub-ink); font-size: 14px; overflow-wrap: anywhere; }
+.ov-note { margin: 0; font-size: 13px; color: var(--hub-ink); padding: 8px 10px; border-radius: 8px; --c: var(--hub-red); background: color-mix(in srgb, var(--c) 10%, transparent); overflow-wrap: anywhere; }
+.ov-note[data-tone='done'] { --c: var(--hub-green); } .ov-note[data-tone='almost'] { --c: var(--hub-teal); }
+.ov-runs, .ov-feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ov-runs li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13px; padding: 6px 8px; border-radius: 6px; background: var(--hub-elev); }
+.ov-runs li > i { width: 6px; height: 6px; border-radius: 50%; background: var(--c); }
+.ov-runs li > span:last-child { font: 400 11px/1 var(--hub-mono); color: var(--hub-ash); }
+.ov-feed { font: 400 12px/1.5 var(--hub-mono); }
+.ov-feed li { display: grid; grid-template-columns: 64px 88px minmax(0, 1fr); gap: 8px; color: var(--hub-mute); white-space: nowrap; transition: opacity 200ms var(--hub-ease-out), transform 200ms var(--hub-ease-out); }
+@starting-style { .ov-feed li { opacity: 0; transform: translateY(-4px); } }
+.ov-feed b { font-weight: 500; color: var(--hub-yellow); overflow: hidden; text-overflow: ellipsis; }
+.ov-feed li > span:last-child { color: var(--hub-body); overflow: hidden; text-overflow: ellipsis; }
+.ov-ctx { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; font: 400 11px/1 var(--hub-mono); color: var(--hub-ash); }
+.ov-meter { height: 4px; border-radius: 2px; background: var(--hub-hair); overflow: hidden; }
+.ov-meter > i { display: block; height: 100%; background: var(--hub-ink); transform-origin: left; transition: transform 400ms var(--hub-ease-out); }
+@container (max-width: 560px) {
+  .ov-in { padding: 0 12px 12px; }
+  .ov-n { display: none; }
+  .ov-chip > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .ov-chip { padding: 5px; }
+  .ov-feed li { grid-template-columns: 64px 72px minmax(0, 1fr); }
+}
+
+@media (pointer: coarse) { .ov-seg > button { min-height: 44px; } }
+
+/* Reduced motion: colors and fades stay, movement goes. */
+@media (prefers-reduced-motion: reduce) {
+  .ov-fade, .ov-sub, .ov-feed li, .ov-ok, .ov-chev, .ov-hd .ov-gl { transition-property: opacity, background-color, color, box-shadow; }
+  .ov-reveal, .ov-bd { transition: opacity 200ms ease; }
+  @starting-style { .ov-fade:not([data-instant]), .ov-sub, .ov-feed li { transform: none; } }
+  .ov-arc circle, .ov-ping { animation: none !important; }
+  .ov-run { display: none; }
+  .ov-pop { animation-name: ov-fade; transform: translateX(-50%); }
+  .ov-ok { transform: none; }
+}

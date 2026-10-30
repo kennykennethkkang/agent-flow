@@ -1,0 +1,8 @@
+{
+  "name": "repo-rules",
+  "version": "0.2.0",
+  "description": "The user's standing rules as guards: no commit or push, no git rm --cached, no prettier --write, no new em dashes",
+  "author": {
+    "name": "Kenneth Kang"
+  }
+}

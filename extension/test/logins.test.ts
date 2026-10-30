@@ -118,8 +118,11 @@ describe('deleting an AWS profile', () => {
     assert.equal(deleteAwsProfile('sandbox', file, Date.UTC(2026, 9, 28, 15, 4, 5)), undefined)
     assert.equal(fs.readFileSync(path.join(dir, 'config.backup-20261028-150405'), 'utf8'), CONFIG)
     assert.ok(!fs.readFileSync(file, 'utf8').includes('sandbox'))
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600)
-    assert.equal(fs.statSync(path.join(dir, 'config.backup-20261028-150405')).mode & 0o777, 0o600)
+    // Windows has no POSIX modes.
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(file).mode & 0o777, 0o600)
+      assert.equal(fs.statSync(path.join(dir, 'config.backup-20261028-150405')).mode & 0o777, 0o600)
+    }
   })
 
   it('leaves the config and writes no backup when refused', () => {

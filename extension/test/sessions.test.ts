@@ -4,7 +4,10 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { chatRows, newer, RC_NAME, rcPattern, rcServerCommand, rcTargets } from '../src/hub/sessions'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import { chatRows, newer, RC_NAME, rcInList, rcPattern, rcRunning, rcRunningNow, rcServerCommand, rcTargets } from '../src/hub/sessions'
 
 const NOW = 1_800_000_000_000
 const base = { pid: 1, sessionId: 's1', cwd: '/u/Armasu', status: 'idle', version: '2.1.310', kind: 'interactive', updatedAt: NOW - 60_000 }
@@ -67,5 +70,24 @@ describe('rcPattern', () => {
     assert.ok(re.test('claude remote-control --name agent.flow'))
     assert.ok(!re.test('claude remote-control --name agentXflow --spawn worktree'))
     assert.ok(!re.test('claude remote-control --name agent.flow2 --spawn worktree'))
+  })
+})
+
+describe('rcRunning on Windows', () => {
+  it('matches the server by command line, so a reused pid never counts', () => {
+    const cmd = '12 C:\\Windows\\system32\\cmd.exe /d /s /c "claude remote-control --name Mac --spawn same-dir"\r\n'
+    assert.equal(rcInList(`4 \r\n${cmd}`), true)
+    assert.equal(rcInList('13 "node.exe" "cli.js" remote-control --name Mac\r\n'), true)
+    assert.equal(rcInList('4 \r\n14 claude remote-control --name MacBook\r\n99 node.exe\r\n'), false)
+    assert.equal(rcInList(''), false)
+  })
+  it('answers the last listing without blocking or throwing when powershell is missing', () => {
+    assert.equal(rcRunning('win32'), false)
+  })
+  it('waits for a fresh listing when asked now, and the cached answer follows it', async () => {
+    assert.equal(await rcRunningNow('win32', async () => '7 claude remote-control --name Mac\r\n'), true)
+    assert.equal(rcRunning('win32'), true)
+    assert.equal(await rcRunningNow('win32', async () => '8 node.exe\r\n'), false)
+    assert.equal(await rcRunningNow('win32', async () => { throw new Error('no powershell') }), false)
   })
 })

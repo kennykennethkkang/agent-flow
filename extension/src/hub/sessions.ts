@@ -5,7 +5,7 @@
  * Key files beside them are never opened. Called from hub-panel.ts.
  */
 import * as fs from 'fs'
-import { execFileSync } from 'child_process'
+import { execFile, execFileSync } from 'child_process'
 import * as os from 'os'
 import * as path from 'path'
 import type { ChatRow } from './types'
@@ -54,9 +54,33 @@ export const rcServerCommand = () => `claude remote-control --name '${RC_NAME}' 
 /** `pgrep -f` pattern for a Remote Control server named `name`, as the kit's LaunchAgent starts it. */
 export const rcPattern = (name: string) => `remote-control --name ${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( |$)`
 
+/** Windows has no pgrep -f: every process as "pid command line", as the kit's rc-servers.mjs lists them. */
+const PS_LIST = 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }'
+/** Whether a PS_LIST listing holds the server; cmd.exe and claude both carry its command line. */
+export const rcInList = (ps: string, name = RC_NAME) => new RegExp(rcPattern(name), 'm').test(ps.replace(/\r/g, ''))
+
+const psList = () => new Promise<string>((resolve, reject) =>
+  execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', PS_LIST], { windowsHide: true, timeout: 15_000, maxBuffer: 8 << 20 }, (err, out) => (err ? reject(err) : resolve(String(out)))))
+
+let rcSeen = false, listing = false
 /** The Remote Control server running as a process, whoever started it. */
-export function rcRunning(): boolean {
+export function rcRunning(platform: NodeJS.Platform = process.platform): boolean {
+  if (platform === 'win32') {
+    // Answers the last listing, since powershell takes a second and this runs on every refresh; rcRunningNow waits.
+    if (!listing) {
+      listing = true
+      psList().then(out => { rcSeen = rcInList(out) }, () => {}).finally(() => { listing = false })
+    }
+    return rcSeen
+  }
   try { execFileSync('pgrep', ['-f', rcPattern(RC_NAME)], { stdio: 'ignore', timeout: 2000 }); return true } catch { return false }
+}
+
+/** rcRunning from a fresh listing, for the on/off switch. */
+export async function rcRunningNow(platform: NodeJS.Platform = process.platform, list = psList): Promise<boolean> {
+  if (platform !== 'win32') return rcRunning(platform)
+  try { rcSeen = rcInList(await list()) } catch { /* keep the last answer */ }
+  return rcSeen
 }
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM' } }

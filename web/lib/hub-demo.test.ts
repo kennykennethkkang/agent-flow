@@ -10,11 +10,11 @@ test('a demo New chat puts a working chat on top, named from the goal', () => {
   assert.equal(h.progress[0].state, 'working')
 })
 
-test('demoTick adds a tool call to the working chat, keeps 8, and turns the roles', () => {
+test('demoTick adds a tool call to the working chat, keeps them, and turns the roles', () => {
   let h = demoHub(0)
   for (let t = 0; t < 10; t++) h = demoTick(h, 1000 + t * 900)
   const w = h.progress.find(p => p.sessionId === 'd-work')!
-  assert.equal(w.tools?.length, 8)
+  assert.ok((w.tools?.length ?? 0) >= 10)
   assert.equal(w.tools?.at(-1)?.at, 1000 + 9 * 900)
   assert.deepEqual(w.roles.filter(r => r.role !== 'jev').map(r => [r.id, r.state]), [['r1', 'done'], ['r2', 'active'], ['e1', 'active'], ['e2', 'active']])
   const qa = demoTick(h, 19_000).progress.find(p => p.sessionId === 'd-work')!
@@ -99,4 +99,40 @@ test('the demo shows a dev row per project, and Dev, Stop and Keep awake change 
   assert.deepEqual(off, qr)
   assert.equal(demoApply(h, { type: 'hub-dev-start', folder: '/etc' }).dev, h.dev)
   assert.equal(demoApply(h, { type: 'hub-awake', on: true }).awake, true)
+})
+
+test('the demo applies to-do commands to its sample list, with one item a chat ticked off to put back', () => {
+  const at = '/Users/k/GitHub/Armasu'
+  let h = demoHub(0)
+  const list = () => h.todos![at]
+  assert.equal(list().ticked?.length, 1)
+  h = demoApply(h, { type: 'hub-todo-remove', path: at, id: 'dt1' })
+  assert.ok(!list().todo.some(t => t.id === 'dt1'))
+  h = demoApply(h, { type: 'hub-todo-add', path: at, text: ' New one ' })
+  assert.equal(list().todo.at(-1)?.text, 'New one')
+  h = demoApply(h, { type: 'hub-todo-edit', path: at, id: 'dt4', text: 'Edited' })
+  assert.equal(list().todo.find(t => t.id === 'dt4')?.text, 'Edited')
+  const ticked = list().ticked![0]
+  h = demoApply(h, { type: 'hub-todo-restore', path: at, id: ticked.id })
+  assert.equal(list().ticked?.length ?? 0, 0)
+  assert.ok(list().todo.some(t => t.text === ticked.text && t.id !== ticked.id && t.from === ticked.from && t.before === ticked.before))
+  h = demoApply(h, { type: 'hub-todo-run', path: at, ids: ['dt4'] })
+  assert.ok(list().todo.find(t => t.id === 'dt4')?.chat)
+
+  assert.equal(demoApply(h, { type: 'hub-todo-remove', path: '/nowhere', id: 'x' }), h)
+})
+
+test('the name setting round-trips in the demo, empty by default', () => {
+  assert.equal(demoHub().controls.switchboard.name, '')
+  const h = demoApply(demoHub(), { type: 'hub-switchboard', key: 'name', value: 'Kenneth' })
+  assert.equal(h.controls.switchboard.name, 'Kenneth')
+})
+
+test('a demo run starts the picked item and its prerequisite, like the extension\'s runOrder', () => {
+  const at = '/Users/k/GitHub/Armasu'
+  const h = demoApply(demoHub(0), { type: 'hub-todo-run', path: at, ids: ['dt1'] })
+  const todo = h.todos![at].todo, chat = todo.find(t => t.id === 'dt1')?.chat
+  assert.ok(chat)
+  assert.equal(todo.find(t => t.id === 'dt2')?.chat, chat)
+  assert.equal(todo.find(t => t.id === 'dt4')?.chat, undefined)
 })

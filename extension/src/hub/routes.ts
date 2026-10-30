@@ -9,6 +9,9 @@
  * GET  /hub/state   the whole HubState, for the standalone web app's proxy (token in the query); no thisWindow, it is no window
  * POST /hub/command a hub-* command, run as the panel's (token in the query)
  * POST /hub/device  the standalone app passes on a device asking to sign in, or that it was answered (token in the query)
+ * POST /hub/question       the ask tool's question {sessionId, id, questions}; GET ?id= holds 25 s for its answer (204: ask again, 410: gone);
+ *      /hub/question/done  ?id=: answered in the terminal (token in the query)
+ * POST /hub/todo    the ask server's todo_add or todo_done {op, cwd, text?, id?, before?, session?}; answers a line for the chat (token in the query)
  * Anything outside /hub answers undefined and stays with the hook handler.
  */
 import { askBrain, askContext, brief } from './brain'
@@ -17,6 +20,9 @@ import type { WebviewToExtensionMessage } from '../protocol'
 import type { GitOp, SettingKey, SwitchboardKey } from './types'
 import { isAi } from './ais'
 import { ROLE_MODELS } from './roles'
+import { questionAsk } from './progress'
+import { closeQuestion, openQuestion, questionOf, waitQuestion } from './questions'
+import { todoTool, type TodoCall } from './todo'
 
 export type HubReply = { status: number; body: string; contentType?: string }
 
@@ -31,14 +37,20 @@ const opt = (f: Check): Check => v => v === undefined || f(v)
 const oneOf = (...xs: unknown[]): Check => v => xs.includes(v)
 const any = (...fs: Check[]): Check => v => fs.some(f => f(v))
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
-// One option index per question, at most four.
-const picks: Check = v => Array.isArray(v) && v.length > 0 && v.length <= 4 && v.every(x => Number.isInteger(x) && x >= 0 && x < 10)
+// One answer per question, at most four: an option index, several for a multiSelect one, or Other text.
+// The text goes into a terminal; askKeys cleans and cuts it, this only stops a huge body.
+const index = (x: unknown) => Number.isInteger(x) && (x as number) >= 0 && (x as number) < 10
+const indexes = (x: unknown) => Array.isArray(x) && x.length <= 10 && x.every(index)
+const other = (x: unknown) => obj(x) && typeof x.other === 'string' && x.other.length <= 500 && (x.picks === undefined || indexes(x.picks))
+const picks: Check = v => Array.isArray(v) && v.length > 0 && v.length <= 4 && v.every(x => index(x) || indexes(x) || other(x))
 const flags = (v: unknown) => obj(v) && Object.values(v).every(bool)
 const profile: Check = v => obj(v) && flags(v.plugins) && flags(v.skills) && (v.assets === undefined || flags(v.assets))
 const SETTING_KEYS: SettingKey[] = ['autoCompactEnabled', 'autoCompactWindow', 'autoContinueAtUsageLimit', 'remoteControlAtStartup', 'agentPushNotifEnabled', 'inputNeededNotifEnabled', 'model', 'effortLevel', 'tui', 'statusLine']
-const GIT_OPS: GitOp[] = ['sync', 'commit', 'commit-push', 'switch', 'create', 'undo', 'discard', 'pr', 'stash', 'pop', 'delete-branch']
+const GIT_OPS: GitOp[] = ['sync', 'commit', 'commit-push', 'switch', 'create', 'undo', 'discard', 'pr', 'stash', 'pop', 'delete-branch', 'rerun']
 const paths: Check = v => Array.isArray(v) && v.length <= 1000 && v.every(x => typeof x === 'string')
-const SWITCHBOARD_KEYS: SwitchboardKey[] = ['hooks', 'statusBar', 'idleMinutes', 'brief', 'askBrain', 'syncRules']
+// Typed by Kenneth; todo.ts cuts it to 300 after cleaning, this only stops a huge body.
+const todoText: Check = v => typeof v === 'string' && v.length <= 2000
+const SWITCHBOARD_KEYS: SwitchboardKey[] = ['hooks', 'statusBar', 'idleMinutes', 'brief', 'askBrain', 'syncRules', 'accessNote', 'name']
 
 /** Every field of every hub command, as protocol.ts declares it; the runner trusts these types. */
 const SHAPES: { [T in HubCommand['type']]: { [K in Exclude<keyof Extract<HubCommand, { type: T }>, 'type'>]-?: Check } } = {
@@ -57,7 +69,7 @@ const SHAPES: { [T in HubCommand['type']]: { [K in Exclude<keyof Extract<HubComm
   'hub-open-project': { path: str, newWindow: bool },
   'hub-clone': { repo: str, newWindow: bool },
   'hub-new-chat': { path: str, text: opt(str), remote: bool, branch: opt(str), ai: opt(isAi), tools: opt(profile) },
-  'hub-pick-tools': { text: str },
+  'hub-pick-tools': { text: str, path: opt(str) },
   'hub-chat-tools': { sessionId: str, tools: profile },
   'hub-star': { sessionId: str, ai: isAi, on: bool },
   'hub-resume': { sessionId: str, ai: isAi },
@@ -81,6 +93,7 @@ const SHAPES: { [T in HubCommand['type']]: { [K in Exclude<keyof Extract<HubComm
   'hub-login-delete': { app: str, id: str },
   'hub-login-app-delete': { app: str },
   'hub-kit-export': {},
+  'hub-setup': {},
   'hub-rules-sync': {},
   'hub-role-model': { role: str, model: oneOf(...ROLE_MODELS) },
   'hub-rc-server': { folder: str, on: bool },
@@ -93,6 +106,13 @@ const SHAPES: { [T in HubCommand['type']]: { [K in Exclude<keyof Extract<HubComm
   'hub-awake': { on: bool },
   'hub-device': { id: str, allow: bool },
   'hub-git': { sessionId: str, op: oneOf(...GIT_OPS), files: opt(paths), summary: opt(str), description: opt(str), branch: opt(str), stash: opt(bool), confirmed: opt(bool) },
+  'hub-todo-add': { path: str, text: todoText },
+  'hub-todo-edit': { path: str, id: str, text: todoText },
+  'hub-todo-remove': { path: str, id: str },
+  'hub-todo-restore': { path: str, id: str },
+  'hub-todo-run': { path: str, ids: v => Array.isArray(v) && v.length > 0 && v.length <= 50 && v.every(x => typeof x === 'string'), to: opt(str) },
+  'hub-todo-sync': { path: str, on: bool },
+  'hub-todo-replace': { path: str, remote: v => typeof v === 'string' && /^[0-9a-f]{40}$/.test(v) },
 }
 
 /** Why a command is refused, or undefined when every field has its declared type. */
@@ -107,8 +127,8 @@ export function commandProblem(c: unknown): string | undefined {
 /** The runner's answer as a reply: a string is the reason it refused. */
 export const ranReply = (r: boolean | string): HubReply => (typeof r === 'string' ? { status: 400, body: r } : { status: r ? 204 : 400, body: '' })
 
-/** Only /hub/ask answers later; `ask` is swapped in tests so none spends. */
-export function handleHub(hub: HubService, method: string | undefined, url: string | undefined, body: string, ask = askBrain): HubReply | Promise<HubReply> | undefined {
+/** Only /hub/ask answers later; `ask` and `todo` are swapped in tests so none spends or writes. */
+export function handleHub(hub: HubService, method: string | undefined, url: string | undefined, body: string, ask = askBrain, todo: (c: TodoCall & { cwd: string }) => Promise<string> = todoTool): HubReply | Promise<HubReply> | undefined {
   const u = new URL(url ?? '/', 'http://127.0.0.1')
   if (u.pathname !== '/hub' && !u.pathname.startsWith('/hub/')) return undefined
 
@@ -165,6 +185,48 @@ export function handleHub(hub: HubService, method: string | undefined, url: stri
     } catch (err) {
       return { status: 500, body: (err as Error).message }
     }
+  }
+
+  if (u.pathname === '/hub/question' || u.pathname === '/hub/question/done') {
+    if (!hub.isToken(u.searchParams.get('token'))) return { status: 403, body: '' }
+    const id = u.searchParams.get('id') ?? ''
+    if (method === 'POST' && u.pathname === '/hub/question') {
+      let b: unknown
+      try { b = JSON.parse(body) } catch { return { status: 400, body: '' } }
+      const ask = obj(b) && typeof b.id === 'string' && /^[0-9a-f]{32}$/.test(b.id) && typeof b.sessionId === 'string' ? questionAsk(b.id, b) : undefined
+      if (!ask || !obj(b)) return { status: 400, body: '' }
+      // sub: the lead's own calls leave it, like a subagent's prompt.
+      const hubAsk = { ...ask, tool: 'ask', via: 'hub' as const, sub: true as const }
+      openQuestion(hubAsk.id, b.sessionId as string, hubAsk)
+      hub.asked(b.sessionId as string, hubAsk)
+      return { status: 204, body: '' }
+    }
+    if (method === 'GET' && u.pathname === '/hub/question') {
+      const q = questionOf(id)
+      if (!q) return { status: 410, body: '' }
+      // Only an unanswered one goes back on the card; one handed over leaves it.
+      if (!q.choice) hub.asked(q.sessionId, q.ask)
+      return waitQuestion(id, 25_000)!.then(choice => {
+        if (!choice) return { status: 204, body: '' }
+        hub.answered(q.sessionId, id)
+        return { status: 200, body: JSON.stringify({ choice }), contentType: 'application/json' }
+      })
+    }
+    if (method === 'POST' && u.pathname === '/hub/question/done') {
+      const sessionId = closeQuestion(id)
+      if (sessionId) hub.answered(sessionId, id)
+      return { status: 204, body: '' }
+    }
+  }
+
+  if (method === 'POST' && u.pathname === '/hub/todo') {
+    if (!hub.isToken(u.searchParams.get('token'))) return { status: 403, body: '' }
+    let b: unknown
+    try { b = JSON.parse(body) } catch { return { status: 400, body: '' } }
+    const field = (v: unknown) => v === undefined || (typeof v === 'string' && v.length <= 2000)
+    if (!obj(b) || (b.op !== 'add' && b.op !== 'done') || typeof b.cwd !== 'string' || !b.cwd || !['text', 'id', 'before', 'session'].every(k => field(b[k]))) return { status: 400, body: 'op, cwd and string fields only' }
+    const c = Object.fromEntries(['op', 'cwd', 'text', 'id', 'before', 'session'].filter(k => b[k] !== undefined).map(k => [k, b[k]])) as TodoCall & { cwd: string }
+    return todo(c).then(text, err => ({ status: 400, body: (err as Error).message }))
   }
 
   if (method === 'POST' && u.pathname === '/hub/device') {

@@ -31,7 +31,8 @@ const MIME_TYPES: Record<string, string> = {
 }
 
 export function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) {
-  const url = req.url || '/'
+  // The query (like ?layout=desk) is for the page, not the file.
+  const url = new URL(req.url || '/', 'http://x').pathname
 
   if (url === '/' || url === '/index.html') {
     res.writeHead(200, { 'Content-Type': 'text/html' })

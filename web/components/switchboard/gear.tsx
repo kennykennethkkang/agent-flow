@@ -10,6 +10,7 @@ import type { HubState, SettingKey, SwitchboardKey } from '@/lib/hub-types'
 import { gearRows } from '@/lib/gear-rows'
 import type { HubCommand } from '@/lib/vscode-bridge'
 import { SignIns } from './sign-ins'
+import { label } from './look'
 
 export function Switch({ on, onChange, label, text }: { on: boolean; onChange: (next: boolean) => void; label: string; text?: string }) {
   return (
@@ -35,7 +36,9 @@ const EFFORTS: Array<[string, string]> = [['default', 'Auto'], ['low', 'Low'], [
 const IDLE: Array<[string, string]> = [['5', 'After 5 min'], ['15', 'After 15 min'], ['30', 'After 30 min'], ['60', 'After 1 h'], ['never', 'Never']]
 
 const SECTIONS = ['Chats', 'Models', 'Accounts', 'Integrations', 'Installed'] as const
-type Section = typeof SECTIONS[number]
+export type Section = typeof SECTIONS[number]
+export type Layout = 'classic' | 'desk'
+const LAYOUTS: Array<[Layout, string]> = [['desk', 'Desk'], ['classic', 'Classic']]
 type Row = { label: string; control: ReactNode; hint?: string; section: Section }
 
 function Line({ row }: { row: Row }) {
@@ -50,19 +53,27 @@ function Line({ row }: { row: Row }) {
   )
 }
 
-const sub = { font: '500 11px/1 var(--hub-mono)', color: 'var(--hub-ash)', textTransform: 'uppercase', letterSpacing: 0.4, margin: '16px 0 4px' } as const
+const sub = { ...label, lineHeight: 1, margin: '16px 0 4px' } as const
 
-export function Gear({ hub, send }: { hub: HubState; send: (c: HubCommand) => void; onSignIns?: () => void }) {
+/** start: the section to open on. layout: this device's own pick, kept in its browser storage. */
+export function Gear({ hub, send, start = 'Chats', layout, onLayout }: { hub: HubState; send: (c: HubCommand) => void; onSignIns?: () => void; start?: Section; layout?: Layout; onLayout?: (l: Layout) => void }) {
   const [q, setQ] = useState('')
-  const [at, setAt] = useState<Section>('Chats')
+  const [at, setAt] = useState<Section>(start)
   const c = hub.controls.claude
   const sb = hub.controls.switchboard
   const set = (key: SettingKey, value: boolean | string | null) => send({ type: 'hub-setting', key, value })
-  const own = (key: SwitchboardKey, value: boolean | number | null) => send({ type: 'hub-switchboard', key, value })
+  const own = (key: SwitchboardKey, value: boolean | number | string | null) => send({ type: 'hub-switchboard', key, value })
   const query = q.trim().toLowerCase()
   const lead = c.model ?? 'default'
 
   const rows: Row[] = [
+    ...(layout && onLayout ? [{ section: 'Chats' as const, label: 'Layout', hint: 'This device only. Desk puts chats on the left, the chat in the middle and Today, To-do and Git on the right.',
+      control: <Pick label="Layout" options={LAYOUTS} value={layout} onChange={v => onLayout(v as Layout)} /> }] : []),
+    { section: 'Chats', label: 'Your name', hint: 'Chats call you by this name. Leave it empty to skip it.',
+      // Keyed by the saved name, so a save from another window shows here.
+      control: <input key={sb.name} className="hub-select" aria-label="Your name" placeholder="Name" maxLength={40} defaultValue={sb.name} style={{ cursor: 'text' }}
+        onBlur={e => { const v = e.target.value.trim(); if (v !== sb.name) own('name', v) }}
+        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} /> },
     { section: 'Chats', label: 'Hide idle chats', hint: 'A chat that stopped and stayed quiet this long leaves the list; Find still has it.',
       control: <Pick label="Hide idle chats" options={IDLE} value={sb.idleMinutes === null ? 'never' : String(sb.idleMinutes)} onChange={v => own('idleMinutes', v === 'never' ? null : Number(v))} /> },
     { section: 'Chats', label: 'Continue at usage limit', hint: 'When a usage limit resets, Claude picks the chat up again by itself.',
@@ -72,6 +83,8 @@ export function Gear({ hub, send }: { hub: HubState; send: (c: HubCommand) => vo
     { section: 'Chats', label: 'Brief for new chats', hint: 'New chats first read what other chats in the project are doing.',
       control: <Switch label="Brief for new chats" on={sb.brief} onChange={next => own('brief', next)} /> },
     { section: 'Chats', label: 'Push to your phone', hint: 'When a chat finishes.', control: <Switch label="Push to your phone" on={c.push} onChange={next => set('agentPushNotifEnabled', next)} /> },
+    { section: 'Chats', label: 'Keep phone access in Apple Notes', hint: 'One private note, "Switchboard access", with the code and links; updated when they change. Off stops updates.',
+      control: <Switch label="Keep phone access in Apple Notes" on={sb.accessNote} onChange={next => own('accessNote', next)} /> },
     { section: 'Chats', label: 'Notify when a chat needs input', control: <Switch label="Notify when a chat needs input" on={c.needInput} onChange={next => set('inputNeededNotifEnabled', next)} /> },
 
     { section: 'Models', label: 'Lead model', hint: 'The main chat, and every role set to Inherit.',
@@ -121,7 +134,7 @@ export function Gear({ hub, send }: { hub: HubState; send: (c: HubCommand) => vo
             <span style={{ font: '400 12px/1 var(--hub-mono)', color: 'var(--hub-ash)' }}>{l.names.length}</span>
           </summary>
           {l.names.length
-            ? <ul role="list" className="hub-names">{l.names.map(n => <li key={n} title={n}>{n}</li>)}</ul>
+            ? <ul role="list" className="hub-names">{l.names.map((n, i) => <li key={n} title={l.tips[i] ? `${n}: ${l.tips[i]}` : n}>{n}</li>)}</ul>
             : <p style={{ margin: '0 0 10px 22px', fontSize: 12, color: 'var(--hub-ash)' }}>None</p>}
         </details>
       ))}
@@ -132,6 +145,8 @@ export function Gear({ hub, send }: { hub: HubState; send: (c: HubCommand) => vo
     if (s === 'Accounts') return <SignIns hub={hub} send={send} />
     if (s === 'Installed') return (
       <>
+        <Line row={{ section: 'Installed', label: 'Set up', hint: 'Installs the plugins, mods, MCP servers, rules and roles Switchboard works with. Skips what you have.',
+          control: <button type="button" className="hub-btn" onClick={() => send({ type: 'hub-setup' })}>Set up</button> }} />
         <Line row={{ section: 'Installed', label: 'Export kit', hint: 'Roles, skills, plugins and mods as one folder you can copy to another Mac.',
           control: <button type="button" className="hub-btn" onClick={() => send({ type: 'hub-kit-export' })}>Export</button> }} />
         <h4 style={sub}>Installed</h4>

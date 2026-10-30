@@ -25,6 +25,15 @@ const SHORT = new RegExp(`^(${NAME})/(${NAME})$`)
 const HTTPS = new RegExp(`^https://github\\.com/(${NAME})/(${NAME})(?:\\.git)?/?$`)
 const SSH = new RegExp(`^git@github\\.com:(${NAME})/(${NAME})(?:\\.git)?$`)
 
+export type Shell = 'posix' | 'powershell'
+/** The shell a chat terminal runs here. */
+export const SHELL: Shell = process.platform === 'win32' ? 'powershell' : 'posix'
+/** One line as one argument: sh single quotes, or PowerShell's with every quote, curly ones too, doubled. */
+export const shellQuote = (s: string, shell: Shell) => {
+  const one = s.replace(/\s+/g, ' ').trim()
+  return shell === 'posix' ? `'${one.replace(/'/g, `'\\''`)}'` : `'${one.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`
+}
+
 /** A GitHub repo from owner/repo, its https URL or its ssh address; anything else is refused. */
 export function cloneTarget(input: string): { url: string; name: string } | undefined {
   const s = input.trim()
@@ -43,11 +52,8 @@ const BRANCH = /^(?!-)[^\s\x00-\x1f]+$/
  * textFile, when given, carries the message instead: a line typed into a starting shell
  * is cut at 1024 bytes on macOS, which left long messages at a `quote>` prompt.
  */
-export function newChatCommand(o: { text?: string; textFile?: string; remote?: string; branch?: string; name?: string; sessionId?: string; settings?: string; system?: string }, shell: 'posix' | 'powershell'): string {
-  const quote = (s: string) => {
-    const one = s.replace(/\s+/g, ' ').trim()
-    return shell === 'posix' ? `'${one.replace(/'/g, `'\\''`)}'` : `'${one.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`
-  }
+export function newChatCommand(o: { text?: string; textFile?: string; remote?: string; branch?: string; name?: string; sessionId?: string; settings?: string; system?: string }, shell: Shell): string {
+  const quote = (s: string) => shellQuote(s, shell)
   let claude = 'claude'
   if (o.name) claude += ` --name ${quote(o.name)}`
   if (o.sessionId !== undefined) {

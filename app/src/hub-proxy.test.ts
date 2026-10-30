@@ -4,11 +4,14 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { allowed, codeLogin, deniedAs, deviceAsks, lanCookie, lanFor, lanGate, lanHosts, liveToken, localName, phoneCode, phoneSecret, pickWindow, signInPage, tailscaleName, uaSummary, waitPage } from './hub-proxy'
+import { allowed, codeLogin, deniedAs, deviceAsks, lanCookie, lanFor, lanGate, lanHosts, commandFolder, liveToken, localName, phoneCode, phoneSecret, pickWindow, proxyHub, signInPage, tailscaleName, uaSummary, waitPage } from './hub-proxy'
 import * as crypto from 'crypto'
 import * as fs from 'fs'
+import * as http from 'http'
+import type { AddressInfo } from 'net'
 import * as os from 'os'
 import * as path from 'path'
+import * as zlib from 'zlib'
 
 const w = (workspace: string, mtimeMs: number, port = 1) => ({ port, hubToken: 't', workspace, mtimeMs })
 
@@ -27,6 +30,25 @@ describe('pickWindow', () => {
   it('takes the window whose workspace holds the app folder', () => {
     const files = [w('/u/b', 9, 1), w('/u/Armasu', 1, 2), w('/u/Arm', 5, 3)]
     assert.equal(pickWindow(files, '/u/Armasu/web')?.port, 2)
+  })
+  it('takes the window holding the command folder first, the deepest one, else the usual pick', () => {
+    const files = [w('/u/agent-flow', 9, 1), w('/u/Armasu', 1, 2), w('/u', 5, 3)]
+    assert.equal(pickWindow(files, '/u/agent-flow', undefined, '/u/Armasu')?.port, 2)
+    assert.equal(pickWindow(files, '/u/agent-flow', undefined, '/u/Armasu/web')?.port, 2)
+    assert.equal(pickWindow(files, '/u/agent-flow', undefined, '/u/other')?.port, 3)
+    assert.equal(pickWindow(files, '/u/agent-flow', undefined, '/elsewhere')?.port, 1)
+    assert.equal(pickWindow(files, '/u/agent-flow')?.port, 1)
+  })
+  it('routes to-do and new-chat commands by their path, nothing else', () => {
+    assert.equal(commandFolder('{"type":"hub-todo-run","path":"/u/Armasu","ids":["a"]}'), '/u/Armasu')
+    assert.equal(commandFolder('{"type":"hub-todo-add","path":"/u/Armasu","text":"x"}'), '/u/Armasu')
+    assert.equal(commandFolder('{"type":"hub-new-chat","path":"/u/b","remote":false}'), '/u/b')
+    // Their answers stay in the window that ran them, which the page reads.
+    assert.equal(commandFolder('{"type":"hub-pick-tools","text":"x","path":"/u/b"}'), undefined)
+    assert.equal(commandFolder('{"type":"hub-dev-start","folder":"/u/b"}'), undefined)
+    assert.equal(commandFolder('{"type":"hub-send","sessionId":"s"}'), undefined)
+    assert.equal(commandFolder('{"type":"hub-todo-run","path":5}'), undefined)
+    assert.equal(commandFolder('not json'), undefined)
   })
   it('skips files without a port or token', () => {
     assert.equal(pickWindow([{ workspace: '/u', mtimeMs: 9 } as never, w('/u', 1, 4)], '/x')?.port, 4)
@@ -323,11 +345,12 @@ describe('device approval', () => {
     assert.equal(liveToken(files, '', alive), false)
     assert.equal(liveToken(files, undefined, alive), false)
   })
-  it('the sign-in page asks the Mac first, the code stays below, no scripts', () => {
+  it('the sign-in page puts the code first, asking the Mac below for when someone is at it, no scripts', () => {
     const page = signInPage()
     assert.match(page, /action="\/device" method="post"/)
     assert.match(page, /Ask the Mac to let me in/)
-    assert.ok(page.indexOf('action="/device"') < page.indexOf('action="/login"'))
+    assert.match(page, /at the Mac/)
+    assert.ok(page.indexOf('action="/login"') < page.indexOf('action="/device"'))
     assert.doesNotMatch(page, /<script|\u2014/)
   })
   it('the wait page refreshes itself to its own id, no scripts', () => {
@@ -337,4 +360,126 @@ describe('device approval', () => {
     assert.doesNotMatch(page, /<script|https?:\/\/|\u2014/)
     assert.doesNotMatch(waitPage('"><x'), /"><x/)
   })
+})
+
+// A fake window's hook server behind a real proxy, on loopback, Wi-Fi and Tailscale Hosts alike.
+describe('proxyHub to-do', () => {
+  const todos = { '/p': { todo: [{ id: 'a', text: 'later', at: 1 }], ticked: [{ id: 'b', text: 'did', at: 2, by: 's1' }], sync: { state: 'synced', canSync: true } } }
+  const hops: Array<{ method?: string; url?: string; body: string }> = []
+  let stamp = 0
+  const up = http.createServer(async (req, res) => {
+    let body = ''
+    for await (const c of req) body += c
+    hops.push({ method: req.method, url: req.url, body })
+    if (req.url?.startsWith('/hub/state')) res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ chats: [], todos, ...(stamp ? { stamp } : {}) }))
+    else res.writeHead(204).end()
+  })
+  const lan = { host: '192.168.1.5', secret: 's', names: ['mac.tail1.ts.net'] }
+  let port = 0
+  // A second window on another project, opened later, so it is the newest.
+  const other: string[] = []
+  const up2 = http.createServer(async (req, res) => {
+    let body = ''
+    for await (const c of req) body += c
+    other.push(`${req.url} ${body}`)
+    res.writeHead(204).end()
+  })
+  const app = http.createServer((req, res) => {
+    const local = req.headers.host?.startsWith('127.') ? undefined : lan
+    void proxyHub(req, res, port, '/p', local, async () => [
+      { port: (up.address() as AddressInfo).port, hubToken: 'tok', workspace: '/p', mtimeMs: 1, pid: process.pid },
+      { port: (up2.address() as AddressInfo).port, hubToken: 'tok2', workspace: '/q', mtimeMs: 2, pid: process.pid },
+    ])
+  })
+  const call = (host: string, method: string, path: string, body?: string) => new Promise<{ status: number; body: string }>((ok, fail) => {
+    const r = http.request({ host: '127.0.0.1', port, method, path, headers: { Host: host, 'X-Switchboard': '1', Origin: `http://${host}`, 'Content-Type': 'application/json' } }, x => {
+      let b = ''
+      x.on('data', c => { b += c })
+      x.on('end', () => ok({ status: x.statusCode ?? 0, body: b }))
+    })
+    r.on('error', fail)
+    r.end(body)
+  })
+  const start = (s: http.Server) => new Promise<void>(ok => s.listen(0, '127.0.0.1', () => ok()))
+  const hosts = () => [`127.0.0.1:${port}`, `192.168.1.5:${port}`, `mac.tail1.ts.net:${port}`]
+
+  it('starts', async () => { await start(up); await start(up2); await start(app); port = (app.address() as AddressInfo).port })
+
+  it('hands the to-do lists, ticked and sync included, to every path', async () => {
+    for (const host of hosts()) {
+      const r = await call(host, 'GET', '/hub/state')
+      assert.equal(r.status, 200, host)
+      assert.deepEqual(JSON.parse(r.body).todos, todos, host)
+    }
+  })
+
+  it('passes every to-do command the panel sends, unchanged, with the window token added', async () => {
+    const cmds = [
+      { type: 'hub-todo-add', path: '/p', text: 'x' },
+      { type: 'hub-todo-edit', path: '/p', id: 'a', text: 'y' },
+      { type: 'hub-todo-remove', path: '/p', id: 'a' },
+      { type: 'hub-todo-restore', path: '/p', id: 'b' },
+      { type: 'hub-todo-run', path: '/p', ids: ['a'] },
+      { type: 'hub-todo-run', path: '/p', ids: ['a'], to: 's1' },
+      { type: 'hub-todo-sync', path: '/p', on: true },
+    ]
+    for (const host of hosts()) for (const c of cmds) {
+      hops.length = 0
+      const r = await call(host, 'POST', '/hub/command', JSON.stringify(c))
+      assert.equal(r.status, 204, `${host} ${c.type}`)
+      assert.deepEqual(hops, [{ method: 'POST', url: '/hub/command?token=tok', body: JSON.stringify(c) }], `${host} ${c.type}`)
+    }
+  })
+
+  it('still refuses a to-do command from another site or without the header', async () => {
+    hops.length = 0
+    const evil = await new Promise<number>(ok => http.request({ host: '127.0.0.1', port, method: 'POST', path: '/hub/command', headers: { Host: `127.0.0.1:${port}`, 'X-Switchboard': '1', Origin: 'http://evil.test' } }, x => { x.resume(); ok(x.statusCode ?? 0) }).end('{"type":"hub-todo-run","path":"/p","ids":["a"]}'))
+    const bare = await new Promise<number>(ok => http.request({ host: '127.0.0.1', port, method: 'POST', path: '/hub/command', headers: { Host: `127.0.0.1:${port}` } }, x => { x.resume(); ok(x.statusCode ?? 0) }).end('{"type":"hub-todo-run","path":"/p","ids":["a"]}'))
+    assert.deepEqual([evil, bare, hops.length], [403, 403, 0])
+  })
+
+  it('sends a command to the window holding its folder, on every path', async () => {
+    const run = JSON.stringify({ type: 'hub-todo-run', path: '/q/web', ids: ['a'] })
+    for (const host of hosts()) {
+      hops.length = 0; other.length = 0
+      assert.equal((await call(host, 'POST', '/hub/command', run)).status, 204, host)
+      assert.deepEqual([hops.length, other], [0, [`/hub/command?token=tok2 ${run}`]], host)
+    }
+  })
+
+  const getState = (headers: Record<string, string>) => new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((ok, fail) => {
+    const r = http.request({ host: '127.0.0.1', port, method: 'GET', path: '/hub/state', headers: { Host: `127.0.0.1:${port}`, 'X-Switchboard': '1', ...headers } }, x => {
+      const parts: Buffer[] = []
+      x.on('data', c => parts.push(c))
+      x.on('end', () => ok({ status: x.statusCode ?? 0, headers: x.headers, body: Buffer.concat(parts) }))
+    })
+    r.on('error', fail)
+    r.end()
+  })
+
+  it('gzips the state when the browser takes it, and sends it plain when not', async () => {
+    const z = await getState({ 'Accept-Encoding': 'gzip, deflate, br' })
+    assert.equal(z.headers['content-encoding'], 'gzip')
+    assert.deepEqual(JSON.parse(zlib.gunzipSync(z.body).toString()).todos, todos)
+    const plain = await getState({})
+    assert.equal(plain.headers['content-encoding'], undefined)
+    assert.deepEqual(JSON.parse(plain.body.toString()).todos, todos)
+    assert.equal(z.headers.etag, plain.headers.etag)
+  })
+
+  it('answers 304 with no body on a matching ETag, and a new ETag once the state changes', async () => {
+    const first = await getState({ 'Accept-Encoding': 'gzip' })
+    const tag = String(first.headers.etag)
+    assert.match(tag, /^"[0-9a-f]+"$/)
+    const same = await getState({ 'Accept-Encoding': 'gzip', 'If-None-Match': tag })
+    assert.deepEqual([same.status, same.body.length, same.headers.etag], [304, 0, tag])
+    stamp = 1
+    const changed = await getState({ 'If-None-Match': tag })
+    assert.equal(changed.status, 200)
+    assert.notEqual(changed.headers.etag, tag)
+    assert.equal(JSON.parse(changed.body.toString()).stamp, 1)
+    stamp = 0
+  })
+
+  it('stops', () => { app.close(); up.close(); up2.close() })
 })

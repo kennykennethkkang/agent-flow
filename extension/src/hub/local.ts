@@ -564,6 +564,32 @@ export async function projectInventory(folder: string): Promise<Installed[]> {
   return out
 }
 
+// The bundled design library (kit/design-md), copied here so chats can read it by absolute path.
+export const LIBRARY = path.join(CLAUDE, 'switchboard', 'design-md')
+
+/** Replaces dir with src when their VERSION stamps differ; true when it copied. Stamp written last, so a cut copy retries. */
+export async function syncLibrary(src: string, dir = LIBRARY): Promise<boolean> {
+  const stamp = (d: string) => fs.promises.readFile(path.join(d, 'VERSION'), 'utf8').catch(() => undefined)
+  const v = await stamp(src)
+  if (!v || await stamp(dir) === v) return false
+  await fs.promises.rm(dir, { recursive: true, force: true })
+  await fs.promises.cp(src, dir, { recursive: true, filter: f => path.basename(f) !== 'VERSION' })
+  await fs.promises.writeFile(path.join(dir, 'VERSION'), v)
+  return true
+}
+
+/** Library brands with a DESIGN.md, off by default in a chat's tool pick. */
+export async function libraryInventory(dir = LIBRARY): Promise<Installed[]> {
+  const out: Installed[] = []
+  for (const brand of (await fs.promises.readdir(dir).catch(() => [] as string[])).sort()) {
+    const file = path.join(dir, brand, 'DESIGN.md')
+    if (brand.startsWith('.') || !fs.existsSync(file)) continue
+    const description = await mdTitle(file)
+    out.push({ kind: 'asset', name: brand, enabled: true, source: 'library', path: file, ...(description ? { description } : {}) })
+  }
+  return out
+}
+
 const MANIFESTS = ['pyproject.toml', 'requirements.txt', 'Cargo.toml', 'go.mod', 'Package.swift', 'Gemfile']
 
 /** What the tool pick knows of a project: its folder name, the head of CLAUDE.md or AGENTS.md, its dependencies. */

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { step, settle, finishedJobs, RUNNING_CAP_MS, commitMessage, shouldNotify, notifyKey, notifyStep, canPrefill, plainText, askKeys, dropAsk, askedQuestion, standup, doneText, almostDone, missed, todayText, newerVersion } from '../src/hub/progress'
+import { step, settle, finishedJobs, RUNNING_CAP_MS, commitMessage, shouldNotify, notifyKey, notifyStep, canPrefill, plainText, askKeys, otherText, OTHER_MAX, dropAsk, askedQuestion, standup, doneText, almostDone, missed, todayText, newerVersion, desktopNotice } from '../src/hub/progress'
 import { coverageItems, parseScores } from '../src/hub/coverage'
 import { commandProblem } from '../src/hub/routes'
 import { HubService } from '../src/hub/hub-service'
@@ -320,7 +320,7 @@ test('notifyStep: a permission prompt asked again after the tool ran notifies ag
   assert.deepEqual(shown, ['needs-you', 'needs-you', 'done'])
 })
 
-test('tools: lead and subagent calls, short targets, newest 8 kept', () => {
+test('tools: lead and subagent calls, short targets', () => {
   const p = run([
     ev('SessionStart'),
     ev('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/Users/k/repo/src/hub/progress.ts' } }),
@@ -341,8 +341,6 @@ test('tools: lead and subagent calls, short targets, newest 8 kept', () => {
     ['TaskList', undefined, 'lead'],
   ])
   assert.ok(!('target' in p!.tools![6]))
-  const many = run([ev('SessionStart'), ...Array.from({ length: 10 }, (_, i) => ev('PreToolUse', { tool_name: `T${i}` }))])
-  assert.deepEqual(many?.tools?.map(t => t.tool), ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9'])
   assert.equal(run([ev('SessionStart'), ev('PreToolUse', { tool_name: 'Read' }), ev('SessionStart', { source: 'clear' })])?.tools, undefined)
 })
 
@@ -519,8 +517,55 @@ test('askKeys: questions take one number each, and several end on Submit', () =>
   assert.deepEqual(askKeys(two, [1, 0]), ['2', '1', '1'])
   assert.equal(typeof askKeys(two, [0]), 'string')
   assert.equal(typeof askKeys(two, [0, 2]), 'string')
-  const multi = run([ev('SessionStart'), ev('PreToolUse', { tool_name: 'AskUserQuestion', tool_use_id: 't3', tool_input: { questions: [{ ...q, multiSelect: true }] } })])!.ask!
-  assert.match(String(askKeys(multi, [0])), /terminal/)
+})
+
+// Checked against claude 2.1.314 in tmux: a number toggles a multiSelect option without moving the cursor,
+// Down walks to Type something (typing ticks it) and then Next/Submit, Enter presses it.
+const D = '\x1b[B'
+const ask = (questions: object[]) => run([ev('SessionStart'), ev('PreToolUse', { tool_name: 'AskUserQuestion', tool_use_id: 'tq', tool_input: { questions } })])!.ask!
+const three = (multiSelect: boolean) => ({ question: 'Which?', multiSelect, options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }] })
+
+test('askKeys: a multiSelect question toggles by number, walks to Next and ends on Submit', () => {
+  const m = ask([three(true)])
+  assert.deepEqual(askKeys(m, [[1, 2]]), ['2', '3', D, D, D, D, '\r', '1'])
+  assert.deepEqual(askKeys(m, [0]), ['1', D, D, D, D, '\r', '1'])
+  assert.equal(typeof askKeys(m, [[]]), 'string')
+  assert.equal(typeof askKeys(m, [[3]]), 'string')
+  assert.equal(typeof askKeys(m, [[1, 1]]), 'string')
+})
+
+test('askKeys: single then multi, multi then single', () => {
+  assert.deepEqual(askKeys(ask([three(false), three(true)]), [2, [0]]), ['3', '1', D, D, D, D, '\r', '1'])
+  assert.deepEqual(askKeys(ask([three(true), three(false)]), [[0, 2], 1]), ['1', '3', D, D, D, D, '\r', '2', '1'])
+})
+
+test('askKeys: Other types its text in place of an option', () => {
+  assert.deepEqual(askKeys(ask([three(false)]), [{ other: 'Wed 5pm' }]), ['4', 'Wed 5pm', '\r'])
+  assert.deepEqual(askKeys(ask([three(false), three(false)]), [{ other: 'x' }, 0]), ['4', 'x', '\r', '1', '1'])
+  assert.deepEqual(askKeys(ask([three(true)]), [{ picks: [0], other: 'zed' }]), ['1', D, D, D, 'zed', D, '\r', '1'])
+  assert.deepEqual(askKeys(ask([three(true)]), [{ other: 'zed' }]), [D, D, D, 'zed', D, '\r', '1'])
+  assert.equal(typeof askKeys(ask([three(false)]), [{ picks: [0], other: 'x' }]), 'string')
+  assert.equal(typeof askKeys(ask([three(false)]), [{ other: '  ' }]), 'string')
+})
+
+test('askKeys: Other text loses control characters, newlines and escapes, and is cut short', () => {
+  const one = ask([three(false)])
+  assert.deepEqual(askKeys(one, [{ other: 'a\x1b[2J\nb\r\x9b31m\tc\u2028d\x07' }]), ['4', 'a [2J b 31m c d', '\r'])
+  const long = askKeys(one, [{ other: 'x'.repeat(500) }]) as string[]
+  assert.equal(long[1], 'x'.repeat(OTHER_MAX))
+  assert.equal(otherText('\x1b\x1b'), '')
+  assert.equal(otherText('a'.repeat(OTHER_MAX - 1) + '\u{1F600}b'), 'a'.repeat(OTHER_MAX - 1) + '\u{1F600}')
+})
+
+test('askKeys: permission prompts take no Other text', () => {
+  const p = run([ev('SessionStart'), ev('PermissionRequest', PERM)])!.ask!
+  assert.equal(typeof askKeys(p, [{ other: 'x' }]), 'string')
+  assert.equal(typeof askKeys(p, [[0]]), 'string')
+})
+
+test('hub-answer: Other text and multiSelect picks pass, anything else is refused', () => {
+  for (const choice of [[[0, 2]], [{ other: 'x' }], [{ picks: [1], other: 'x' }], [0, { other: 'y' }]]) assert.equal(commandProblem({ type: 'hub-answer', sessionId: 's', askId: 'a', choice }), undefined)
+  for (const choice of [[{}], [{ other: 3 }], [{ other: 'x'.repeat(501) }], [{ picks: [-1], other: 'x' }], [{ picks: 'a', other: 'x' }], [null]]) assert.match(commandProblem({ type: 'hub-answer', sessionId: 's', askId: 'a', choice }) ?? '', /choice/)
 })
 
 const COMMIT = { last_assistant_message: 'All set.\n\nCommit message:\n```\nfix: x\n```' }
@@ -721,16 +766,15 @@ test('standup: Done and Left items from bold lines, headings or labels; an empty
   assert.equal(many.done[0].length <= 160, true)
 })
 
-test('Stop keeps the standup: Left items make a done chat almost done, with its own notify key and text', () => {
+test('Stop keeps the standup: Left items go to the to-do, so a done chat with only Left is finished', () => {
   const tasks = [ev('PreToolUse', { tool_name: 'TaskCreate', tool_input: { subject: 'a' } }), ev('PreToolUse', { tool_name: 'TaskUpdate', tool_input: { taskId: '1', status: 'completed' } })]
   const almost = run([ev('SessionStart'), ...tasks, ev('Stop', { last_assistant_message: STANDUP })])!
   assert.equal(almost.state, 'done')
   assert.deepEqual(almost.report?.left, ['Ship the vsix', 'Update docs'])
   const done = run([ev('SessionStart'), ...tasks, ev('Stop', { last_assistant_message: STANDUP.replace(/\*\*Left\*\*\n1\. Ship the vsix\n2\) Update docs/, '**Left**\n- none') })])!
   assert.deepEqual(done.report?.left, [])
-  assert.notEqual(notifyKey(almost), notifyKey(done))
-  assert.equal(shouldNotify(notifyKey(almost), done), true)
-  assert.equal(doneText(almost), 'almost done, 2 left: Ship the vsix')
+  assert.equal(almostDone(almost), false)
+  assert.equal(doneText(almost), 'finished, all 1 task done, 2 to the to-do')
   assert.equal(doneText(done), 'finished, all 1 task done')
   assert.equal(doneText({ ...done, tasks: [] }), 'finished')
   assert.equal(run([ev('SessionStart'), ...tasks, ev('Stop', { last_assistant_message: 'Done.' })])!.report, undefined)
@@ -739,7 +783,7 @@ test('Stop keeps the standup: Left items make a done chat almost done, with its 
 test('Stop: a standup with Done items finishes a chat that had nothing to commit; prose alone stays idle', () => {
   const said = (m: string) => run([ev('SessionStart'), ev('Stop', { last_assistant_message: m })])!
   assert.equal(said('Nothing to change.\n\n**Standup**\n- **Done:** checked the README\n- **Left:** nothing.').state, 'done')
-  assert.equal(almostDone(said('**Done:** looked\n**Left:** reload VS Code')), true)
+  assert.equal(almostDone(said('**Done:** looked\n**Left:** reload VS Code')), false)
   assert.equal(said('I looked at it.').state, 'idle')
   assert.equal(said('**Left:** reload VS Code').state, 'idle')
 })
@@ -791,7 +835,25 @@ test('coverage: jev.py lines map back to requests by _id', () => {
   const out = '[jev] 2 items\n{"_id": "1", "addressed": 0.09}\n{"_id": "0", "addressed": 0.94}\n{"_id": "9", "addressed": 1}\nnoise'
   assert.deepEqual(parseScores(out, 3), [0.94, 0.09, null])
   const p = run([ev('SessionStart'), ev('UserPromptSubmit', { prompt: 'a' }), ev('Stop', { last_assistant_message: '**Done**\n- x\n- y\n\n**Left**\n- z' })])!
-  assert.deepEqual(coverageItems(p), [{ _id: '0', request: 'a', done: 'x\ny', left: 'z' }])
+  assert.deepEqual(coverageItems(p), [{ _id: '0', request: 'a', done: 'x\ny' }])
+})
+
+// The Armasu chat: done, one Done line, four future Left lines, one prompt, five old scores.
+test('armasu: future Left items and stale scores leave a done chat finished', () => {
+  const p = run([ev('SessionStart'), ev('UserPromptSubmit', { prompt: 'fix the receipts' }),
+    ev('Stop', { last_assistant_message: '**Done**\n- Fixed the receipts\n\n**Left**\n- a\n- b\n- c\n- d\n\nCommit message:\n```\nx\n```' })])!
+  const live = { ...p, covered: [0.15, 0.62, 0.73, 0.31, 0.5] }
+  assert.deepEqual(missed(live), [])
+  assert.equal(almostDone(live), false)
+  assert.equal(notifyKey(live).startsWith('done\n'), true)
+  // A new prompt drops the old scores.
+  assert.equal(step(live, ev('UserPromptSubmit', { prompt: 'and the totals' }), 9)!.covered, undefined)
+})
+
+test('standup: a line ending in a colon is a heading, not a Left item', () => {
+  const msg = '**Left**\nthe 9 future items in Switchboard. Three are new from this chat:\n- Check the totals\n- Ship it'
+  assert.deepEqual(standup(msg)?.left, ['Check the totals', 'Ship it'])
+  assert.deepEqual(standup('**Left**\n- Three are new from this chat:\n- Ship it')?.left, ['Ship it'])
 })
 
 test('todayText: finished, almost done and needs-you chats from today; quiet days say nothing', () => {
@@ -803,7 +865,7 @@ test('todayText: finished, almost done and needs-you chats from today; quiet day
     { ...base, sessionId: 'c', state: 'needs-you' as const, at: today },
     { ...base, sessionId: 'd', state: 'done' as const, at: yday, finishedAt: yday },
   ]
-  assert.equal(todayText(all, p => p.sessionId, now), '1 finished; 1 almost done: b; 1 need you: c')
+  assert.equal(todayText(all, p => p.sessionId, now), '2 finished; 0 almost done; 1 need you: c')
   assert.equal(todayText(all.slice(3), p => p.sessionId, now), undefined)
 })
 
@@ -812,4 +874,25 @@ test('newerVersion compares x.y.z numerically', () => {
   assert.equal(newerVersion('0.17.10', '0.17.9'), true)
   assert.equal(newerVersion('0.17.28', '0.17.28'), false)
   assert.equal(newerVersion('0.16.99', '0.17.0'), false)
+})
+
+test('desktop notice: osascript on macOS, a PowerShell toast on Windows with the text only in env, none elsewhere', () => {
+  const mac = desktopNotice('Chat "a"', 'Done', 'darwin')!
+  assert.equal(mac.cmd, 'osascript')
+  assert.match(mac.args[1], /display notification "Done" with title "Switchboard" subtitle "Chat \\"a\\""/)
+  const evil = 'x\'; Remove-Item C:\\ -Recurse #'
+  const win = desktopNotice(evil, '$(calc)', 'win32')!
+  assert.equal(win.cmd, 'powershell')
+  assert.ok(!win.args.join(' ').includes('Remove-Item') && !win.args.join(' ').includes('calc'))
+  assert.equal(win.env?.SWITCHBOARD_TITLE, `Switchboard: ${evil}`)
+  assert.equal(win.env?.SWITCHBOARD_TEXT, '$(calc)')
+  assert.equal(desktopNotice('a', 'b', 'linux'), undefined)
+})
+
+test('tools: keeps the newest 200 calls for the timeline, minimal fields only', () => {
+  const calls = Array.from({ length: 205 }, (_, i) => ev('PreToolUse', { tool_name: 'Read', tool_input: { file_path: `/r/f${i}.ts`, extra: 'x'.repeat(500) } }))
+  const p = run([ev('SessionStart'), ...calls])!
+  assert.equal(p.tools?.length, 200)
+  assert.equal(p.tools?.[0].target, 'r/f5.ts')
+  assert.deepEqual(Object.keys(p.tools!.at(-1)!).sort(), ['at', 'role', 'target', 'tool'])
 })

@@ -1,8 +1,12 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import type { GitOp, RepoFile, RepoView } from '@/lib/hub-types'
+import type { ChatRow, GitOp, RepoFile, RepoView } from '@/lib/hub-types'
 import type { HubCommand } from '@/lib/vscode-bridge'
+import { boxNote } from '@/lib/message-box'
+import { resolvePrompt } from '@/lib/pr-card'
 import { caps, panel } from './look'
+import { PrCard } from './pr-card'
+import { CiCard } from './check-cards'
 
 type Git = Omit<Extract<HubCommand, { type: 'hub-git' }>, 'type' | 'sessionId'>
 type Ask = { text: string; yes: string; cmd: Git }
@@ -20,8 +24,8 @@ const target = (r: RepoView) => {
 }
 
 /** Kenneth's git buttons for the chat's repo: each one a plain git or gh command in the extension, never run by a chat. */
-export function GitPanel({ repo, sessionId, commit, isVSCode, send }: {
-  repo: RepoView | null | undefined; sessionId: string; commit?: string; isVSCode: boolean; send: (c: HubCommand) => void
+export function GitPanel({ repo, sessionId, chat, commit, isVSCode, send }: {
+  repo: RepoView | null | undefined; sessionId: string; chat?: ChatRow; commit?: string; isVSCode: boolean; send: (c: HubCommand) => void
 }) {
   const mine = repo?.sessionId === sessionId ? repo : null
   const [unchecked, setUnchecked] = useState<Set<string>>(new Set())
@@ -62,6 +66,15 @@ export function GitPanel({ repo, sessionId, commit, isVSCode, send }: {
   const all = checked.length === r.files.length
   const compare = r.github && r.branch && `${r.github}/compare/${encodeURI(t.name)}?expand=1`
   const head = r.log[0]
+  const createPr = r.github && r.upstream && !MAIN.test(t.name) && (isVSCode
+    ? <button type="button" className="hub-btn" style={small} disabled={busy} onClick={() => run({ op: 'pr' })} title="gh pr create --fill --web, or the compare page">Create pull request</button>
+    : compare && <a className="hub-btn" style={{ ...small, textDecoration: 'none' }} href={compare} target="_blank" rel="noopener noreferrer">Create pull request ↗</a>)
+  // The chat itself merges and fixes; a chat that cannot take a message gets a new one in its folder.
+  const resolve = () => {
+    if (!r.merge || !chat) return
+    const text = resolvePrompt(r.merge)
+    send(boxNote(chat) ? { type: 'hub-new-chat', path: chat.cwd, text, remote: false } : { type: 'hub-send', sessionId, text })
+  }
 
   return (
     <section aria-label="Git" aria-busy={busy} style={panel}>
@@ -104,15 +117,17 @@ export function GitPanel({ repo, sessionId, commit, isVSCode, send }: {
         </form>
       </div>}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 12 }}>
-        {r.pr
-          ? <button type="button" className="hub-link" style={{ padding: '2px 0', fontSize: 12, textAlign: 'left' }} onClick={() => open(r.pr!.url)}>
-              PR {r.pr.state.toLowerCase()}: {r.pr.title} ↗
-            </button>
-          : r.github && r.upstream && !MAIN.test(t.name) && (isVSCode
-            ? <button type="button" className="hub-btn" style={small} disabled={busy} onClick={() => run({ op: 'pr' })} title="gh pr create --fill --web, or the compare page">Create pull request</button>
-            : compare && <a className="hub-btn" style={{ ...small, textDecoration: 'none' }} href={compare} target="_blank" rel="noopener noreferrer">Create pull request ↗</a>)}
-      </div>
+      {r.merge
+        ? <PrCard repo={r} create={createPr} busy={busy || !chat} onOpen={open} onResolve={resolve} />
+        : <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 12 }}>
+            {r.pr
+              ? <button type="button" className="hub-link" style={{ padding: '2px 0', fontSize: 12, textAlign: 'left' }} onClick={() => open(r.pr!.url)}>
+                  PR {r.pr.state.toLowerCase()}: {r.pr.title} ↗
+                </button>
+              : createPr}
+          </div>}
+
+      {r.ci && <CiCard run={r.ci} busy={busy} onOpen={() => open(r.ci!.url)} onRerun={() => run({ op: 'rerun' })} />}
 
       {r.files.length > 0
         ? <>
@@ -132,8 +147,8 @@ export function GitPanel({ repo, sessionId, commit, isVSCode, send }: {
                 </li>
               ))}
             </ul>
-            <input aria-label="Commit summary" placeholder="Summary (required)" value={summary} onChange={e => { setSummary(e.target.value); setTyped(true) }} style={field} />
-            <textarea aria-label="Commit description" placeholder="Description" rows={2} value={description} onChange={e => { setDescription(e.target.value); setTyped(true) }} style={{ ...field, resize: 'vertical' }} />
+            <input aria-label="Commit summary" placeholder="Summary (required)" value={summary} onChange={e => { setSummary(e.target.value); setTyped(true) }} style={{ ...field, fontWeight: 500 }} />
+            <textarea aria-label="Commit description" placeholder="Description: what this commit did, one bullet per line" rows={Math.min(12, Math.max(3, description.split('\n').length + 1))} value={description} onChange={e => { setDescription(e.target.value); setTyped(true) }} style={{ ...field, resize: 'vertical' }} />
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               <button type="button" className="hub-btn primary" style={{ ...small, flex: '1 1 auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} disabled={!canCommit}
                 onClick={() => run({ op: 'commit', files: checked, summary, description })}>{r.busy === 'commit' ? 'Committing...' : `Commit to ${r.branch ?? 'branch'}`}</button>
@@ -165,7 +180,7 @@ export function GitPanel({ repo, sessionId, commit, isVSCode, send }: {
       </p>
 
       {r.log.length > 0 && <details>
-        <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--hub-ash)' }}>History</summary>
+        <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--hub-mute)', padding: '4px 0' }}>Recent commits</summary>
         <ol role="list" style={{ listStyle: 'none', margin: '6px 0 0', padding: 0, display: 'grid', gap: 2 }}>
           {r.log.map(l => <li key={l.hash} style={{ display: 'flex', gap: 8, fontSize: 12, minWidth: 0 }}>
             <code style={{ font: '400 12px/1.5 var(--hub-mono)', color: 'var(--hub-ash)' }}>{l.hash}</code>

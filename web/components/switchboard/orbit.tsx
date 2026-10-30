@@ -195,7 +195,7 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
   const legend: Array<[string, string]> = [['working', C.blue], ...(showTools ? [['tool call', C.yellow] as [string, string]] : []), ['done', C.green], ...(almostDone(c.progress) ? [['almost done', C.teal] as [string, string]] : []), ['needs you', C.red]]
   // The legend: one row, or more on a narrow stage (a key that would run past the edge starts a new row below);
   // each extra row lifts the picture above it by its height.
-  ctx.font = `400 11px ${C.mono}`
+  ctx.font = `400 12px ${C.mono}`
   const rows: Array<Array<[string, string, number]>> = [[]]
   let lx = 16
   for (const [l, col] of legend) {
@@ -291,7 +291,7 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
         if (!still && age < 420) { ctx.beginPath(); ctx.arc(ex, ey, 2.5, 0, TAU); ctx.fillStyle = rgba(C.yellow, age < 340 ? 1 : 1 - (age - 340) / 80); ctx.fill() }
         if (a <= 0) return
         pill(x, y, call.tool, C.yellow, a, { size: 11 })
-        if (call.target) { ctx.font = `400 10px ${C.mono}`; text(fit(call.target, w * 0.28), x, y + 18, { size: 10, color: C.mute, mono: true, weight: 400, alpha: a }) }
+        if (call.target) { ctx.font = `400 11px ${C.mono}`; text(fit(call.target, w * 0.28), x, y + 18, { size: 11, color: C.mute, mono: true, weight: 400, alpha: a }) }
       })
     }
   }
@@ -353,11 +353,11 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
       else if (kb === 0) S.badge.delete(r.role)
       const model = c.models?.[r.role]
       if (model) {
-        ctx.font = `400 10px ${C.mono}`
+        ctx.font = `400 11px ${C.mono}`
         const label = fit(model, rr * 2.4), half = ctx.measureText(label).width / 2 + 8
         let ly = p.y + rr + 11 + p.band * Math.max(0, Math.sin(p.a))
         if (qBox && p.x + half > qBox.l && p.x - half < qBox.l + qBox.pw && ly + 14 > qBox.top && ly - 14 < qBox.top + qBox.ph) ly = p.y - rr - 11 - p.band * Math.max(0, -Math.sin(p.a))
-        text(label, p.x, tw(`ly:${r.role}`, ly, TW.move), { size: 10, color: C.mute, mono: true, weight: 400, alpha: dim })
+        text(label, p.x, tw(`ly:${r.role}`, ly, TW.move), { size: 11, color: C.mute, mono: true, weight: 400, alpha: dim })
       }
     })
   }
@@ -379,7 +379,13 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
   else if (S.sub.text !== sub) S.sub = { text: sub, prev: S.sub.text, at: now }
   const fade = Math.min(1, (now - S.sub.at) / 180)
   if (fade < 1) S.moving = true
-  const subAt = (s: string, a: number) => text(s, cx, cy + lr * 0.26, { size: Math.max(10, lr * 0.13), color: C.mute, mono: true, weight: 400, alpha: dim * a })
+  // A line too wide for the bubble sits just under it instead of spilling over the ring.
+  const subAt = (s: string, a: number) => {
+    const size = Math.max(11, lr * 0.13)
+    ctx.font = `400 ${size}px ${C.mono}`
+    const inside = ctx.measureText(s).width <= lr * 1.7
+    text(s, cx, inside ? cy + lr * 0.26 : cy + lr + 18, { size, color: C.mute, mono: true, weight: 400, alpha: dim * a })
+  }
   if (S.sub.prev && fade < 1) subAt(S.sub.prev, 1 - fade)
   subAt(S.sub.text, fade)
   // The question slides down into place and fades; it fades back out once answered.
@@ -387,13 +393,13 @@ function draw(ctx: CanvasRenderingContext2D, w: number, h: number, t: number, no
   if (qOn > 0.01 && qShown) pop(cx, cy - lr - 30, 1, qOn, () => pill(cx, cy - lr - 30 - (1 - qOn) * 6, qShown, C.red, 1, { size: 12, mono: false, fg: C.ink }))
 
   pill(done.x, done.y, 'Done', twc('dc', finished ? fin : C.ash), lerp(dim, 1, wFin), { size: 12, mono: false, fg: twc('df', finished ? fin : C.mute), check: wFin })
-  if (wFin > 0.01) text(c.progress?.commit ? 'commit message ready' : 'no commit message', done.x, done.y + 24, { size: 10, color: fin, mono: true, weight: 400, alpha: wFin })
+  if (wFin > 0.01) text(c.progress?.commit ? 'commit message ready' : 'no commit message', done.x, done.y + 24, { size: 11, color: fin, mono: true, weight: 400, alpha: wFin })
 
   rows.forEach((row, i) => {
     const ly = h - 18 - (rows.length - 1 - i) * 16
     for (const [l, col, x] of row) {
       ctx.beginPath(); ctx.arc(snap(x + 3), snap(ly), 3, 0, TAU); ctx.fillStyle = col; ctx.fill()
-      text(l, x + 11, ly, { size: 11, color: C.mute, mono: true, weight: 400, align: 'left' })
+      text(l, x + 11, ly, { size: 12, color: C.mute, mono: true, weight: 400, align: 'left' })
     }
   })
 
@@ -480,7 +486,7 @@ export function Orbit({ chat, showTools, instant }: { chat: OrbitChat; showTools
   }, [])
 
   return (
-    <div ref={stage} className="hub-stage" style={{ position: 'relative', width: '100%', maxWidth: '100%', minWidth: 0, maxHeight: 520, borderRadius: 12, border: '1px solid var(--hub-hair)', background: 'var(--hub-canvas)', overflow: 'hidden' }}>
+    <div ref={stage} className="hub-stage" style={{ position: 'relative', width: '100%', maxWidth: '100%', minWidth: 0, borderRadius: 12, border: '1px solid var(--hub-hair)', background: 'var(--hub-canvas)', overflow: 'hidden' }}>
       <canvas ref={canvas} role="img" aria-label={describe(chat)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }} />
     </div>
   )

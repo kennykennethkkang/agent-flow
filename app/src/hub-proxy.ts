@@ -10,6 +10,7 @@ import * as fs from 'fs'
 import * as http from 'http'
 import * as os from 'os'
 import * as path from 'path'
+import * as zlib from 'zlib'
 
 type Win = { port: number; hubToken: string; workspace: string; mtimeMs: number; pid?: number }
 const DIR = path.join(os.homedir(), '.claude', 'switchboard')
@@ -25,12 +26,28 @@ const real = (p: string) => { try { return fs.realpathSync(p) } catch { return p
 const usable = (f: Partial<Win>, alive: (pid: number) => boolean): f is Win =>
   typeof f.port === 'number' && typeof f.hubToken === 'string' && typeof f.workspace === 'string' && (typeof f.pid !== 'number' || alive(f.pid))
 
-/** The newest live window whose workspace holds the app's folder, else the newest live one. A closed window can leave its file behind. */
-export function pickWindow(files: Partial<Win>[], workspace: string, alive: (pid: number) => boolean = pidAlive): Win | undefined {
+/** The live window holding the command's folder (deepest, then newest), else the one holding the app's folder, else the newest.
+ * A closed window can leave its file behind. */
+export function pickWindow(files: Partial<Win>[], workspace: string, alive: (pid: number) => boolean = pidAlive, folder?: string): Win | undefined {
   const ok = files.filter(f => usable(f, alive))
   const newest = [...ok].sort((a, b) => b.mtimeMs - a.mtimeMs)
-  const here = real(workspace)
-  return newest.find(f => { const ws = real(f.workspace); return here === ws || here.startsWith(ws.endsWith(path.sep) ? ws : ws + path.sep) }) ?? newest[0]
+  const holding = (dir: string) => {
+    const here = real(dir)
+    const ws = (f: Win) => real(f.workspace)
+    return newest.filter(f => here === ws(f) || here.startsWith(ws(f).endsWith(path.sep) ? ws(f) : ws(f) + path.sep))
+      .sort((a, b) => ws(b).length - ws(a).length)[0]
+  }
+  return (folder ? holding(folder) : undefined) ?? holding(workspace) ?? newest[0]
+}
+
+/** The project a to-do or new-chat command names, so its chat opens in that project's window. Others stay on the usual
+ * window: their answers (a tool pick, a dev terminal) live in the window that ran them, and the page reads that one. */
+export function commandFolder(body: string): string | undefined {
+  try {
+    const c = JSON.parse(body) as { type?: unknown; path?: unknown }
+    const routed = typeof c?.type === 'string' && (c.type.startsWith('hub-todo-') || c.type === 'hub-new-chat')
+    return routed && typeof c.path === 'string' ? c.path : undefined
+  } catch { return undefined }
 }
 
 /** lan only for a request whose localAddress is a LAN one, already through lanGate. */
@@ -185,11 +202,11 @@ button.alt{background:transparent;color:var(--blue);border:1px solid var(--line)
 /** The sign-in page for a typed address. Self-contained: the device has no cookie, so nothing else would load. */
 export function signInPage(note?: string): string {
   return `${pageHead('Switchboard sign-in')}<h1>Switchboard</h1>${note ? `<p class="note" role="alert">${note}</p>` : ''}
-<form action="/device" method="post"><p>Your Mac shows a prompt in VS Code. Click Allow there.</p>
-<button type="submit">Ask the Mac to let me in</button></form>
-<form action="/login" method="post"><p>Or enter the code shown in Switchboard's Phone menu on your Mac.</p>
+<form action="/login" method="post"><p>Enter the code shown in Switchboard's Phone menu on your Mac.</p>
 <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" maxlength="7" aria-label="Code" required>
-<button type="submit" class="alt">Sign in with the code</button></form></main></body></html>`
+<button type="submit">Sign in with the code</button></form>
+<form action="/device" method="post"><p>Or, when someone is at the Mac, ask it: VS Code shows a prompt there to click Allow.</p>
+<button type="submit" class="alt">Ask the Mac to let me in</button></form></main></body></html>`
 }
 
 /** Shown while the Mac decides; reloads itself every 2 s, no script needed. */
@@ -221,7 +238,8 @@ export async function tellWindows(body: object): Promise<void> {
   }
 }
 
-export async function proxyHub(req: http.IncomingMessage, res: http.ServerResponse, port: number, workspace: string, lan?: Lan): Promise<void> {
+/** list: the window files, swapped in tests so none reaches a real window. */
+export async function proxyHub(req: http.IncomingMessage, res: http.ServerResponse, port: number, workspace: string, lan?: Lan, list = windows): Promise<void> {
   let u: URL
   try { u = new URL(req.url ?? '/', 'http://x') } catch { res.writeHead(400).end(); return }
   const route = req.method === 'GET' && u.pathname === '/hub/state' ? 'state' : req.method === 'POST' && u.pathname === '/hub/command' ? 'command' : undefined
@@ -231,11 +249,23 @@ export async function proxyHub(req: http.IncomingMessage, res: http.ServerRespon
     body += chunk
     if (body.length > MAX_BODY) { res.writeHead(413).end(); return }
   }
-  const win = pickWindow(await windows(), workspace)
+  const win = pickWindow(await list(), workspace, undefined, route === 'command' ? commandFolder(body) : undefined)
   if (!win) { res.writeHead(502).end(); return }
   const up = http.request({ host: '127.0.0.1', port: win.port, method: req.method, path: `/hub/${route}?token=${encodeURIComponent(win.hubToken)}`, headers: { 'Content-Type': 'application/json' }, timeout: 5000 }, r => {
-    res.writeHead(r.statusCode ?? 502, { 'Content-Type': r.headers['content-type'] ?? 'text/plain', 'Cache-Control': 'no-store' })
-    r.pipe(res)
+    const head = { 'Content-Type': r.headers['content-type'] ?? 'text/plain', 'Cache-Control': 'no-store' }
+    if (route !== 'state' || r.statusCode !== 200) { res.writeHead(r.statusCode ?? 502, head); r.pipe(res); return }
+    // The page polls state every 2s: a 304 when nothing changed, else gzip, since a full state runs to a few hundred KB.
+    const parts: Buffer[] = []
+    r.on('data', (c: Buffer) => parts.push(c))
+    r.on('error', () => { if (!res.headersSent) res.writeHead(502).end() })
+    r.on('end', () => {
+      const raw = Buffer.concat(parts)
+      const etag = `"${crypto.createHash('sha1').update(raw).digest('hex')}"`
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-store' }).end(); return }
+      const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))
+      res.writeHead(200, { ...head, ETag: etag, Vary: 'Accept-Encoding', ...(gzip ? { 'Content-Encoding': 'gzip' } : {}) })
+      res.end(gzip ? zlib.gzipSync(raw) : raw)
+    })
   })
   up.on('error', () => { if (!res.headersSent) res.writeHead(502).end() })
   up.on('timeout', () => up.destroy())

@@ -137,6 +137,8 @@ async function toggleAwake(on: boolean): Promise<string | undefined> {
   }
   if (pid) return undefined
   const child = spawn('caffeinate', ['-dis', '-w', String(process.pid)], { stdio: 'ignore' })
+  // Without a listener a spawn error would crash the extension host.
+  child.on('error', () => fs.rmSync(AWAKE_FILE, { force: true }))
   if (!child.pid) return 'caffeinate did not start'
   fs.mkdirSync(DIR, { recursive: true })
   fs.writeFileSync(AWAKE_FILE, String(child.pid))

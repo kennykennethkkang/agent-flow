@@ -2,7 +2,7 @@
   "name": "switchboard",
   "displayName": "Switchboard",
   "description": "Claude Code sessions, usage, timeline and controls in one panel. Based on Agent Flow.",
-  "version": "0.17.32",
+  "version": "0.18.0",
   "publisher": "kennykennethkkang",
   "license": "Apache-2.0",
   "icon": "media/icon.png",

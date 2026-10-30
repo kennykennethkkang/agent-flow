@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process'
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'uninstall.js')
 
-describe('uninstall script', { skip: process.platform === 'win32' && 'HOME override is POSIX-only' }, () => {
+describe('uninstall script', () => {
   it("removes Switchboard's hooks and keeps Agent Flow's and other tools'", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-flow-uninstall-'))
     const settingsPath = path.join(home, '.claude', 'settings.json')
@@ -28,7 +28,7 @@ describe('uninstall script', { skip: process.platform === 'win32' && 'HOME overr
       },
     }))
 
-    execFileSync(process.execPath, [SCRIPT], { env: { ...process.env, HOME: home } })
+    execFileSync(process.execPath, [SCRIPT], { env: { ...process.env, HOME: home, USERPROFILE: home } })
 
     assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')), {
       model: 'opus',

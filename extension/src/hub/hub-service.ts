@@ -8,12 +8,12 @@ import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as os from 'os'
 import { TypedEventEmitter } from '../typed-event-emitter'
-import { dropAsk, finishedJobs, LIMITS, settle, step } from './progress'
+import { addAsk, dropAsk, finishedJobs, LIMITS, settle, step, TOOLS_MAX } from './progress'
 import { chainVersion } from './projects'
 import { FLAGGED } from './tools'
 import { createLogger } from '../logger'
 import { writeJsonAtomic } from '../hook-entries'
-import type { AiId, ChatProgress, ChatRow, ChatState, DeviceAsk, HandoffWait, HubState, InboxDraft, InboxItem, JevRun, Limit, Server, SessionLive } from './types'
+import type { AiId, Ask, ChatProgress, ChatRow, ChatState, DeviceAsk, HandoffWait, HubState, InboxDraft, InboxItem, JevRun, Limit, Server, SessionLive } from './types'
 
 const log = createLogger('Hub')
 
@@ -34,7 +34,7 @@ const MAX_JEV = 50
 const JEV_MATCH_MS = 10 * 60 * 1000
 // A limited chat is told to carry on a minute after its reset, or every half hour when none is known.
 const RETRY_MS = 30 * 60 * 1000
-const CONTINUE = 'Switchboard: the usage limit reset. Continue where you left off; if you need Kenneth, ask with AskUserQuestion.'
+const CONTINUE = 'Switchboard: the usage limit reset. Continue where you left off; if you need the user, ask with AskUserQuestion.'
 
 export const emptyHub = (): HubState => ({
   live: [], history: [], sessions: [], plan: null,
@@ -43,7 +43,7 @@ export const emptyHub = (): HubState => ({
   projects: [],
   controls: {
     claude: { tui: 'default', statusLine: false, push: false, needInput: false },
-    switchboard: { hooks: false, statusBar: true, idleMinutes: 15, brief: true, askBrain: true, syncRules: true },
+    switchboard: { hooks: false, statusBar: true, idleMinutes: 15, brief: true, askBrain: true, syncRules: true, accessNote: true, name: '' },
     statusLineReady: false,
   },
   chats: [], rcServers: [], ais: [], starred: [], progress: [], archive: [],
@@ -98,6 +98,11 @@ export class HubService {
   /** Another window passed on a Dev start or stop; hub-panel.ts checks the folder and acts. */
   readonly onDev = this.devAsked.event
   private readonly promptedChat = new TypedEventEmitter<string>()
+  private readonly endedChat = new TypedEventEmitter<ChatProgress>()
+  /** A chat this window owns ended (SessionEnd), with its last progress; never one that handed off to a fresh chat. */
+  readonly onEnded = this.endedChat.event
+  // Chats that handed off; their open tasks carry over to the fresh chat.
+  private readonly handedOff = new Set<string>()
   /** A chat took a message sent from Switchboard; the window holding its terminal shows it. */
   readonly onPrompted = this.promptedChat.event
   /** handleHubMessage, set by startHub; kept as a field so routes.ts needs no vscode. A string is why it was refused. */
@@ -163,6 +168,7 @@ export class HubService {
     else if (!next?.limited && this.retries.delete(id)) this.saveRetries()
     this.state = { ...this.state, progress: next ? [next, ...rest] : rest }
     this.emit(now)
+    if (payload.hook_event_name === 'SessionEnd' && was && !this.handedOff.delete(id) && !mirror) this.endedChat.fire(was)
     return !mirror && next && next.state !== (was?.state ?? 'working') ? { from: was?.state, to: next } : undefined
   }
 
@@ -286,9 +292,14 @@ export class HubService {
       progress: progress.map(p => p.sessionId !== sessionId ? p : {
         ...p,
         roles: [...p.roles.filter(r => r.role !== 'jev'), { id: 'jev', role: 'jev', state: 'done', startedAt: now }],
-        tools: [...(p.tools ?? []), { tool: preset ?? 'jev', target: `${items} items · ${cost}`, role: 'jev', at: now }].slice(-8),
+        tools: [...(p.tools ?? []), { tool: preset ?? 'jev', target: `${items} items · ${cost}`, role: 'jev', at: now }].slice(-TOOLS_MAX),
       }),
     }
+  }
+
+  /** A question from the ask tool shows on its chat; again after a Stop or a new prompt cleared it. */
+  asked(sessionId: string, ask: Ask): void {
+    if (this.state.progress.some(p => p.sessionId === sessionId && !(p.asks ?? []).some(a => a.id === ask.id))) this.set({ progress: this.state.progress.map(p => (p.sessionId === sessionId ? addAsk(p, ask) : p)) })
   }
 
   /** Drops a prompt once answered from here, so a second tap has nothing to send; the next one waiting shows. */
@@ -340,6 +351,7 @@ export class HubService {
 
   /** Called once the fresh chat's terminal is open: the old chat closes when a new chat first posts from its folder. */
   closeAfterFresh(sessionId: string, cwd: string, now = Date.now()): void {
+    this.handedOff.add(sessionId)
     this.pendingClose = [...this.pendingClose.filter(p => p.sessionId !== sessionId), { sessionId, cwd: cwd.replace(/\\/g, '/'), at: now }]
   }
 

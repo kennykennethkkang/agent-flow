@@ -104,6 +104,11 @@ export function brief(state: HubState, cwd: string, self: string, now = Date.now
   if (files.length) lines.push(`Leave alone, another chat is editing: ${files.join(', ')}`)
   if (task) lines.push(`Next open plan task: ${task}`)
   if (task && state.plan?.decisions?.length) lines.push(`Recent decisions: ${state.plan.decisions.join('; ')}`)
+  const todo = Object.entries(state.todos ?? {}).find(([f]) => norm(f) === home.cwd)?.[1].todo ?? []
+  if (todo.length) {
+    lines.push('Open to-do (if your work completes one, even one you were not asked to do, call todo_done with its id before you finish):')
+    for (const t of todo) lines.push(`- ${t.id}: ${t.text.slice(0, 120)}`)
+  }
   if (sites.length) lines.push(`Dev site: ${sites.join(', ')}`)
   for (const c of state.starred.filter(c => c.sessionId !== self && projectOf(state, c.cwd).cwd === home.cwd)) {
     const gist = c.digest.lastPrompt ?? c.digest.note?.split('\n').find(l => l.trim() && !l.startsWith('#'))

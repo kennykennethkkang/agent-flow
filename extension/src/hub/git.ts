@@ -22,14 +22,23 @@ export type GitCmd = { op: GitOp; files?: string[]; summary?: string; descriptio
 export type GitResult = { ok: boolean; text: string; open?: string }
 type Status = { branch?: string; upstream?: string; ahead: number; behind: number; files: RepoFile[] }
 
-function exec(file: string, args: string[], timeoutMs: number, cwd?: string): Promise<Ran> {
-  return new Promise(resolve => execFile(file, args, { cwd, timeout: timeoutMs, maxBuffer: 8 << 20, windowsHide: true, env: ENV }, (err, out, e) =>
-    resolve({ ok: !err, out: String(out), err: err?.killed ? `${path.basename(file)} timed out` : String(e) || err?.message || '' })))
+/** input: written to stdin (hash-object --stdin, mktree). */
+function exec(file: string, args: string[], timeoutMs: number, cwd?: string, input?: string): Promise<Ran> {
+  return new Promise(resolve => {
+    const c = execFile(file, args, { cwd, timeout: timeoutMs, maxBuffer: 8 << 20, windowsHide: true, env: ENV }, (err, out, e) =>
+      resolve({ ok: !err, out: String(out), err: err?.killed ? `${path.basename(file)} timed out` : String(e) || err?.message || '' }))
+    if (input !== undefined) c.stdin?.end(input)
+  })
 }
 
-export function git(root: string, args: string[], timeoutMs = QUICK): Promise<Ran> {
-  if (args[0] === 'push' && args.some(a => FORCE.test(a))) return Promise.resolve({ ok: false, out: '', err: 'Switchboard never force pushes' })
-  return exec('git', ['-C', root, ...args], timeoutMs)
+// The one forced push: the to-do ref alone, leased on the commit the user saw (todo.ts replaceRemote).
+const TODO_LEASE = /^--force-with-lease=refs\/switchboard\/todo:[0-9a-f]{40}$/
+const todoLease = (args: string[]) => args.filter(a => FORCE.test(a)).every(a => TODO_LEASE.test(a))
+  && args.filter(a => !a.startsWith('-')).join(' ') === 'push origin refs/switchboard/todo:refs/switchboard/todo'
+
+export function git(root: string, args: string[], timeoutMs = QUICK, input?: string): Promise<Ran> {
+  if (args[0] === 'push' && args.some(a => FORCE.test(a)) && !todoLease(args)) return Promise.resolve({ ok: false, out: '', err: 'Switchboard never force pushes' })
+  return exec('git', ['-C', root, ...args], timeoutMs, undefined, input)
 }
 
 /** The first line of stderr worth showing. */
@@ -114,18 +123,148 @@ const push = (root: string, t: { remote: string; name: string; publish: boolean 
 
 let ghAt: string | undefined
 /** VS Code's PATH often lacks Homebrew's bin. A miss is not cached, so installing gh later works. */
-export const ghPath = async () => (ghAt ??= (await cliPath('gh')) ?? ['/opt/homebrew/bin/gh', '/usr/local/bin/gh'].find(f => fs.existsSync(f)))
+export const ghPath = async () => (ghAt ??= (await cliPath('gh')) ?? ['/opt/homebrew/bin/gh', '/usr/local/bin/gh', path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'GitHub CLI', 'gh.exe')].find(f => fs.existsSync(f)))
 
 const prs = new Map<string, { at: number; pr?: RepoView['pr'] }>()
 const PR_MS = 2 * 60_000
 async function prFor(root: string, repo: string, branch: string, gh: string): Promise<RepoView['pr']> {
   const key = `${repo}\n${branch}`, hit = prs.get(key)
   if (hit && Date.now() - hit.at < PR_MS) return hit.pr
-  const r = await exec(gh, ['pr', 'view', branch, '--repo', repo.replace('https://github.com/', ''), '--json', 'url,state,title'], QUICK, root)
+  const r = await exec(gh, ['pr', 'view', branch, '--repo', repo.replace('https://github.com/', ''), '--json', 'url,state,title,number,additions,deletions,baseRefName'], QUICK, root)
   let pr: RepoView['pr']
-  try { const j = JSON.parse(r.out); if (typeof j.url === 'string') pr = { url: j.url, state: String(j.state), title: String(j.title) } } catch { /* none, or gh not signed in */ }
+  try {
+    const j = JSON.parse(r.out)
+    if (typeof j.url === 'string') pr = { url: j.url, state: String(j.state), title: String(j.title), number: Number(j.number) || undefined, additions: Number(j.additions) || 0, deletions: Number(j.deletions) || 0, base: typeof j.baseRefName === 'string' ? j.baseRefName : undefined }
+  } catch { /* none, or gh not signed in */ }
   prs.set(key, { at: Date.now(), pr })
   return pr
+}
+
+type Ci = NonNullable<RepoView['ci']>
+const RUN_MS = 30_000
+const FAILED = new Set(['failure', 'timed_out', 'startup_failure'])
+const text = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
+
+/** `gh run list --json ...` and `gh run view --json jobs` as the CI card's run; undefined with no run. */
+export function parseRun(list: string, view?: string): Ci | undefined {
+  let r: Record<string, unknown> | undefined, jobs: unknown[] = []
+  try { r = JSON.parse(list)[0] } catch { return undefined }
+  if (!r || typeof r.databaseId !== 'number' || !text(r.url)) return undefined
+  try { jobs = view ? JSON.parse(view).jobs ?? [] : [] } catch { /* none yet */ }
+  const conclusion = text(r.conclusion)
+  return {
+    id: r.databaseId, workflow: text(r.workflowName) ?? 'Workflow', status: String(r.status), ...(conclusion ? { conclusion } : {}), url: String(r.url),
+    sha: String(r.headSha ?? '').slice(0, 7), at: Date.parse(String(r.updatedAt)) || 0,
+    jobs: (Array.isArray(jobs) ? jobs : []).map(j => {
+      const o = j as { name?: unknown; status?: unknown; conclusion?: unknown; steps?: { name?: unknown; conclusion?: unknown }[] }
+      const c = text(o.conclusion), step = c && FAILED.has(c) ? text(o.steps?.find(st => FAILED.has(String(st.conclusion)))?.name) : undefined
+      return { name: text(o.name) ?? 'job', status: String(o.status), ...(c ? { conclusion: c } : {}), ...(step ? { step } : {}) }
+    }),
+  }
+}
+
+const runs = new Map<string, { at: number; ci?: Ci }>()
+/** The branch's newest Actions run; cached shorter while it runs. */
+async function runFor(root: string, repo: string, branch: string, gh: string): Promise<Ci | undefined> {
+  const key = `${repo}\n${branch}`, hit = runs.get(key)
+  if (hit && Date.now() - hit.at < (hit.ci && hit.ci.status !== 'completed' ? RUN_MS : PR_MS)) return hit.ci
+  const R = ['--repo', repo.replace('https://github.com/', '')]
+  const l = await exec(gh, ['run', 'list', ...R, '--branch', branch, '--limit', '1', '--json', 'databaseId,status,conclusion,workflowName,url,headSha,updatedAt'], QUICK, root)
+  const first = l.ok ? parseRun(l.out) : undefined
+  // Jobs for the dots row: one more call only when the run changed.
+  const same = !!first && hit?.ci?.id === first.id && hit.ci.at === first.at
+  const ci = same ? hit!.ci : first && parseRun(l.out, (await exec(gh, ['run', 'view', String(first.id), ...R, '--json', 'jobs'], QUICK, root)).out)
+  runs.set(key, { at: Date.now(), ci })
+  return ci
+}
+
+type Merge = NonNullable<RepoView['merge']>
+const CUT = 120
+
+/** The branch a PR would merge into: the PR's base, else origin/HEAD's, else main or master. ref prefers the remote-tracking one. */
+export function pickBase(prBase: string | undefined, originHead: string, refs: string[], remote: string): { name: string; ref: string } | undefined {
+  const names = prBase ? [prBase] : [originHead.startsWith(`${remote}/`) ? originHead.slice(remote.length + 1) : '', 'main', 'master'].filter(Boolean)
+  for (const name of names) {
+    if (branchProblem(name)) continue
+    const ref = [`${remote}/${name}`, name].find(r => refs.includes(r))
+    if (ref) return { name, ref }
+  }
+  return undefined
+}
+
+/** `git merge-tree --write-tree -z --name-only --no-messages`: the merged tree, then each conflicted path. undefined when git is too old (< 2.38). */
+export function parseMergeTree(out: string): { tree: string; files: string[] } | undefined {
+  const [tree, ...rest] = out.split('\0')
+  if (!/^[0-9a-f]{40,64}$/.test(tree)) return undefined
+  return { tree, files: [...new Set(rest.filter(Boolean))] }
+}
+
+/** The first conflict hunk in a merged file: the first line where the two sides differ, numbered as in ours. */
+export function firstConflict(text: string): { line: number; ours: string; theirs: string } | undefined {
+  const lines = text.split(/\r?\n/)
+  const start = lines.findIndex(l => l.startsWith('<<<<<<<'))
+  if (start < 0) return undefined
+  const ours: string[] = [], theirs: string[] = []
+  let side: string[] | undefined = ours
+  for (const l of lines.slice(start + 1)) {
+    if (l.startsWith('>>>>>>>')) break
+    if (l.startsWith('|||||||')) side = undefined
+    else if (l === '=======') side = theirs
+    else side?.push(l)
+  }
+  let k = 0
+  while (k < ours.length && k < theirs.length && ours[k] === theirs[k]) k++
+  if (k >= ours.length && k >= theirs.length) k = 0
+  const cut = (s = '') => s.trim().slice(0, CUT)
+  return { line: start + 1 + k, ours: cut(ours[k]), theirs: cut(theirs[k]) }
+}
+
+/** `git log --format=%h%x00%an%x00%ae%x00%ct` rows; my own email reads as You. */
+export function parseCommits(out: string, me: string): Merge['commits'] {
+  return out.split('\n').filter(Boolean).map(l => {
+    const [hash, name, email, ct] = l.split('\0')
+    return { hash, author: me && email?.toLowerCase() === me.toLowerCase() ? 'You' : name, at: Number(ct) * 1000 }
+  })
+}
+
+// Keyed by both tips, so a refresh with nothing new runs no merge-tree.
+const merges = new Map<string, { key: string; merge: Merge }>()
+
+/** The PR card's data: how this branch stands against its base. Read only: merge-tree writes objects, never the worktree, index, HEAD or refs. */
+export async function readMerge(root: string, branch: string, remote: string, prBase?: string): Promise<Merge | undefined> {
+  const [head, refs, me] = await Promise.all([
+    git(root, ['symbolic-ref', '-q', '--short', `refs/remotes/${remote}/HEAD`]),
+    git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads', `refs/remotes/${remote}`]),
+    config(root, 'user.email'),
+  ])
+  const base = pickBase(prBase, head.out.trim(), refs.out.split('\n').filter(Boolean), remote)
+  if (!base || base.name === branch) return undefined
+  const tips = await git(root, ['rev-parse', 'HEAD', base.ref])
+  if (!tips.ok) return undefined
+  const key = `${base.ref} ${tips.out} ${me}`, hit = merges.get(root)
+  if (hit?.key === key) return hit.merge
+  const [log, count] = await Promise.all([
+    git(root, ['log', '-8', '--format=%h%x00%an%x00%ae%x00%ct', `${base.ref}...HEAD`]),
+    git(root, ['rev-list', '--count', `HEAD..${base.ref}`]),
+  ])
+  const merge: Merge = { base: base.name, behind: Number(count.out.trim()) || 0, files: 0, conflicts: [], commits: parseCommits(log.out, me) }
+  // Only a base that moved past the merge-base can conflict.
+  if (merge.behind) {
+    const t = parseMergeTree((await git(root, ['merge-tree', '--write-tree', '-z', '--name-only', '--no-messages', 'HEAD', base.ref])).out)
+    if (!t) merge.conflicts = undefined
+    else {
+      merge.files = t.files.length
+      merge.conflicts = await Promise.all(t.files.slice(0, 5).map(async p => {
+        const [blob, by] = await Promise.all([
+          git(root, ['cat-file', 'blob', `${t.tree}:${p}`]),
+          git(root, [LIT, 'log', '-1', '--format=%h%x00%an%x00%ae%x00%ct', `HEAD..${base.ref}`, '--', p]),
+        ])
+        return { path: p, by: parseCommits(by.out, me)[0]?.author ?? base.name, ...firstConflict(blob.out) }
+      }))
+    }
+  }
+  merges.set(root, { key, merge })
+  return merge
 }
 
 export const repoRoot = async (cwd: string) => { const r = await git(cwd, ['rev-parse', '--show-toplevel']); return r.ok ? r.out.trim() : undefined }
@@ -135,10 +274,13 @@ export async function readRepo(root: string, gh?: string): Promise<Omit<RepoView
   const remote = (s.branch && (await config(root, `branch.${s.branch}.remote`))) || 'origin'
   const github = githubRepo((await git(root, ['remote', 'get-url', remote])).out)
   const pr = github && gh && s.branch && s.upstream ? await prFor(root, github, (await pushTarget(root, s)).name, gh) : undefined
+  const merge = s.branch ? await readMerge(root, s.branch, remote, pr?.base).catch(() => undefined) : undefined
+  const ci = github && gh && s.branch && s.upstream ? await runFor(root, github, (await pushTarget(root, s)).name, gh).catch(() => undefined) : undefined
   return {
+    merge,
     name: path.basename(root), branch: s.branch, upstream: s.upstream, ahead: s.ahead, behind: s.behind, files: s.files, branches: heads, sync: syncAction(s),
     log: log.out.split('\n').filter(Boolean).map(l => { const [hash, subject, when] = l.split('\t'); return { hash, subject: subject ?? '', when: when ?? '' } }),
-    stashes: stash.out.split('\n').filter(Boolean).length, github, pr, at: Date.now(),
+    stashes: stash.out.split('\n').filter(Boolean).length, github, pr, ...(ci ? { ci } : {}), at: Date.now(),
   }
 }
 
@@ -157,8 +299,9 @@ async function removeUntracked(root: string, files: RepoFile[]): Promise<string 
 
 /** One button press. Refuses rather than guesses; confirmed comes from the in-page confirm. */
 export async function gitOp(root: string, c: GitCmd, gh?: string): Promise<GitResult> {
-  // Any op may change the branch's PR; look again after it.
+  // Any op may change the branch's PR and run; look again after it.
   prs.clear()
+  runs.clear()
   const s = await status(root)
   const pushConfirm = (t: { remote: string; name: string }) => (MAIN.test(t.name) && !c.confirmed ? `Confirm the push to ${t.remote}/${t.name} first` : undefined)
   switch (c.op) {
@@ -265,6 +408,17 @@ export async function gitOp(root: string, c: GitCmd, gh?: string): Promise<GitRe
     case 'pop': {
       const r = await git(root, ['stash', 'pop'])
       return r.ok ? { ok: true, text: 'Popped the last stash' } : no(why(r))
+    }
+    case 'rerun': {
+      // The run is looked up here, never taken from the page.
+      if (!gh || !s.branch || !s.upstream) return no('No GitHub Actions run to re-run')
+      const t = await pushTarget(root, s)
+      const repo = githubRepo((await git(root, ['remote', 'get-url', t.remote])).out)
+      const ci = repo && await runFor(root, repo, t.name, gh)
+      if (!repo || !ci || ci.status !== 'completed' || !FAILED.has(ci.conclusion ?? '')) return no('The last run did not fail, so nothing was re-run')
+      const r = await exec(gh, ['run', 'rerun', String(ci.id), '--failed', '--repo', repo.replace('https://github.com/', '')], QUICK, root)
+      runs.clear()
+      return r.ok ? { ok: true, text: `Re-running the failed jobs in ${ci.workflow}` } : no(why(r))
     }
     case 'pr': {
       if (!s.branch || !s.upstream) return no('Publish the branch first')

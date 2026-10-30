@@ -15,7 +15,12 @@ const SB = path.join(HOME, '.claude', 'switchboard')
 const LABELS = path.join(SB, 'aws-labels.json')
 const PREFS = path.join(SB, 'aws-prefs.json')
 export const OPEN_CHROME = path.join(SB, 'aws-open-chrome.sh')
-const CHROME_STATE = path.join(HOME, 'Library', 'Application Support', 'Google', 'Chrome', 'Local State')
+/** Chrome's Local State, which lists its profiles. */
+export function chromeState(platform: NodeJS.Platform = process.platform, home = HOME, env: NodeJS.ProcessEnv = process.env): string {
+  if (platform === 'win32') return path.join(env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Google', 'Chrome', 'User Data', 'Local State')
+  if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Google', 'Chrome', 'Local State')
+  return path.join(home, '.config', 'google-chrome', 'Local State')
+}
 
 export const validProfileName = (s: string) => /^[A-Za-z0-9._@+-]{1,64}$/.test(s)
 export const validRegion = (s: string) => /^[a-z]{2}(-[a-z]+)+-\d{1,2}$/.test(s)
@@ -168,7 +173,7 @@ export const readLabels = () => strings(readJson(LABELS))
 export const writeLabels = (labels: Record<string, string>) => { fs.mkdirSync(SB, { recursive: true }); writeJsonAtomic(LABELS, labels) }
 export const readPrefs = (): AwsPrefs => { const j = readJson(PREFS); return { chrome: strings(j.chrome), projects: strings(j.projects), browsers: strings(j.browsers) } }
 export const writePrefs = (p: AwsPrefs) => { fs.mkdirSync(SB, { recursive: true }); writeJsonAtomic(PREFS, p) }
-export const readChrome = (): ChromeProfile[] => { try { return chromeProfiles(fs.readFileSync(CHROME_STATE, 'utf8')) } catch { return [] } }
+export const readChrome = (): ChromeProfile[] => { try { return chromeProfiles(fs.readFileSync(chromeState(), 'utf8')) } catch { return [] } }
 export const readAwsConfig = () => { try { return fs.readFileSync(AWS_CONFIG, 'utf8') } catch { return '' } }
 
 /** Writes the config through a temp file and a rename, keeping its mode (0600 for a new one). */
@@ -205,12 +210,34 @@ export function deleteAwsProfile(name: string, file = AWS_CONFIG, now = Date.now
   return undefined
 }
 
-/** The script Python's webbrowser runs (BROWSER) so `aws login` opens in one Chrome profile; the folder comes from the env, never the script. */
+/**
+ * The BROWSER script Python's webbrowser runs so `aws login` opens in one Chrome profile; the folder comes from the env.
+ * None on Windows: webbrowser would run a .cmd through cmd.exe, which splits the sign-in URL at its &s.
+ */
+export function openChromeScript(platform: NodeJS.Platform = process.platform): string | undefined {
+  if (platform === 'win32') return undefined
+  const chrome = platform === 'darwin' ? '/usr/bin/open -na "Google Chrome" --args' : 'google-chrome'
+  return `#!/bin/sh\nexec ${chrome} --profile-directory="$SWITCHBOARD_CHROME_DIR" "$1"\n`
+}
+
+/** Writes openChromeScript and answers its path; '' on Windows, which BROWSER reads as the system browser. */
 export function writeOpenChrome(): string {
+  const script = openChromeScript()
+  if (!script) return ''
   fs.mkdirSync(SB, { recursive: true })
-  fs.writeFileSync(OPEN_CHROME, '#!/bin/sh\nexec /usr/bin/open -na "Google Chrome" --args --profile-directory="$SWITCHBOARD_CHROME_DIR" "$1"\n', { mode: 0o700 })
+  fs.writeFileSync(OPEN_CHROME, script, { mode: 0o700 })
   fs.chmodSync(OPEN_CHROME, 0o700)
   return OPEN_CHROME
+}
+
+/** A URL in one Chrome profile, run with no shell; undefined when Chrome is not found on Windows. */
+export function chromeCall(url: string, dir: string, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env, exists = fs.existsSync): { cmd: string; args: string[] } | undefined {
+  const args = [`--profile-directory=${dir}`, url]
+  if (platform === 'darwin') return { cmd: '/usr/bin/open', args: ['-na', 'Google Chrome', '--args', ...args] }
+  if (platform !== 'win32') return { cmd: 'google-chrome', args }
+  const exe = path.join('Google', 'Chrome', 'Application', 'chrome.exe')
+  const cmd = [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA].flatMap(d => (d ? [path.join(d, exe)] : [])).find(f => exists(f))
+  return cmd ? { cmd, args } : undefined
 }
 
 /** VS Code's PATH often lacks Homebrew's bin. */

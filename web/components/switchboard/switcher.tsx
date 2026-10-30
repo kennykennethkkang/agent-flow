@@ -9,7 +9,10 @@ const Marked = ({ text, hits }: { text: string; hits: number[] }) => {
 }
 
 /** Cmd+K: type part of a name, arrows to move, Enter to open, Esc to close. Focus stays in the dialog. */
-export function Switcher({ items, onPick, onClose }: { items: SwitchItem[]; onPick: (item: SwitchItem) => void; onClose: () => void }) {
+/** tint: the window color of a result's folder. */
+export function Switcher({ items, tint, onPick, onClose }: { items: SwitchItem[]; tint?: (item: SwitchItem) => string | undefined; onPick: (item: SwitchItem) => void; onClose: () => void }) {
+  const [was] = useState(() => typeof document === 'undefined' ? null : document.activeElement as HTMLElement | null)
+  useEffect(() => () => was?.focus(), [was])
   const [q, setQ] = useState('')
   const [at, setAt] = useState(0)
   const input = useRef<HTMLInputElement>(null)
@@ -39,6 +42,7 @@ export function Switcher({ items, onPick, onClose }: { items: SwitchItem[]; onPi
             <li key={`${item.kind}:${item.id}`} id={`${list}-${i}`} role="option" aria-selected={i === sel}
               onMouseMove={() => setAt(i)} onClick={() => onPick(item)}>
               <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <i aria-hidden style={{ display: 'inline-block', width: 3, height: 14, borderRadius: 2, marginRight: 10, verticalAlign: -2, background: tint?.(item) ?? 'transparent' }} />
                 <Marked text={item.name} hits={hits} />{item.version > 1 && <span className="hub-chip ver" style={{ marginLeft: 6 }}>v{item.version}</span>}
               </span>
               {item.kind === 'live'

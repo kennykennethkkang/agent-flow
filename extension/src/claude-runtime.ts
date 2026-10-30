@@ -34,6 +34,7 @@ import { dailySummary, notify } from './hub/notify'
 import { newerVersion } from './hub/progress'
 import { checkAsked } from './hub/coverage'
 import { readWindows } from './hub/dev'
+import { chatEnded, chatFinished } from './hub/todo'
 import type { ChatProgress, ChatState } from './hub/types'
 import { wireWatcherToPanel } from './session-runtime'
 import type { AgentRuntime } from './session-runtime'
@@ -100,9 +101,12 @@ export async function startClaudeRuntime(
 
   // Route hook events → panel, but filter out events the watcher already owns
   if (hookPort !== HOOK_SERVER_NOT_STARTED) {
+    context.subscriptions.push(hub.onEnded(p => { chatEnded(p).catch(err => log.warn('To-do update failed:', err)) }))
     hookServer.onRaw(({ payload, mirror }) => {
       const change = hub.hook(payload, Date.now(), mirror)
       if (!change) return
+      // Only the owning window gets a change, so one window updates the project's To-do and Left lists.
+      if (change.to.state === 'done' && change.from !== 'done') chatFinished(change.to).catch(err => log.warn('To-do update failed:', err))
       // A first Done waits for Jev's verdict on Kenneth's requests, so one notification says it all.
       if (change.to.state === 'done' && change.from !== 'done' && change.to.asked?.length) void withCoverage(change)
       else notify(change)

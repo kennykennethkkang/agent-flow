@@ -8,7 +8,7 @@
 
 export type { AgentEvent, SessionInfo, ConnectionStatus } from './bridge-types'
 import type { AgentEvent, SessionInfo, ConnectionStatus } from './bridge-types'
-import type { AiId, ChatProfile, GitOp, HubState, SettingKey, SwitchboardKey } from './hub-types'
+import type { AiId, ChatProfile, Choice, GitOp, HubState, SettingKey, SwitchboardKey } from './hub-types'
 
 type InitCallback = () => void
 type EventCallback = (event: AgentEvent) => void
@@ -21,7 +21,7 @@ type HubCallback = (hub: HubState) => void
 export type HubCommand =
   | { type: 'hub-refresh' }
   | { type: 'hub-send'; sessionId: string; text: string }
-  | { type: 'hub-answer'; sessionId: string; askId: string; choice: number[] }
+  | { type: 'hub-answer'; sessionId: string; askId: string; choice: Choice }
   | { type: 'hub-rc'; on: boolean; sessionId?: string }
   | { type: 'hub-open-url'; url: string }
   | { type: 'hub-web'; phone: boolean }
@@ -34,7 +34,7 @@ export type HubCommand =
   | { type: 'hub-open-project'; path: string; newWindow: boolean }
   | { type: 'hub-clone'; repo: string; newWindow: boolean }
   | { type: 'hub-new-chat'; path: string; text?: string; remote: boolean; branch?: string; ai?: AiId; tools?: ChatProfile }
-  | { type: 'hub-pick-tools'; text: string }
+  | { type: 'hub-pick-tools'; text: string; path?: string }
   | { type: 'hub-chat-tools'; sessionId: string; tools: ChatProfile }
   | { type: 'hub-star'; sessionId: string; ai: AiId; on: boolean }
   | { type: 'hub-resume'; sessionId: string; ai: AiId }
@@ -59,6 +59,7 @@ export type HubCommand =
   | { type: 'hub-login-delete'; app: string; id: string }
   | { type: 'hub-login-app-delete'; app: string }
   | { type: 'hub-kit-export' }
+  | { type: 'hub-setup' }
   | { type: 'hub-rules-sync' }
   | { type: 'hub-role-model'; role: string; model: 'inherit' | 'fable' | 'opus' | 'sonnet' | 'haiku' }
   | { type: 'hub-rc-server'; folder: string; on: boolean }
@@ -71,6 +72,15 @@ export type HubCommand =
   | { type: 'hub-open-diff'; sessionId: string; file: string }
   | { type: 'hub-search'; q: string }
   | { type: 'hub-git'; sessionId: string; op: GitOp; files?: string[]; summary?: string; description?: string; branch?: string; stash?: boolean; confirmed?: boolean }
+  | { type: 'hub-todo-add'; path: string; text: string }
+  | { type: 'hub-todo-edit'; path: string; id: string; text: string }
+  | { type: 'hub-todo-remove'; path: string; id: string }
+  /** Puts back an item a finished chat ticked off. */
+  | { type: 'hub-todo-restore'; path: string; id: string }
+  /** Items and their open prerequisites, in a new chat or sent to a running one (to). */
+  | { type: 'hub-todo-run'; path: string; ids: string[]; to?: string }
+  | { type: 'hub-todo-sync'; path: string; on: boolean }
+  | { type: 'hub-todo-replace'; path: string; remote: string }
 
 class VSCodeBridge {
   private _isVSCode = false

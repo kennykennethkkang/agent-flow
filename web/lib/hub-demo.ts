@@ -3,6 +3,7 @@
  * The sample mirrors a real week on Kenneth's Mac so the demo reads true.
  */
 import type { HubCommand } from './vscode-bridge'
+import { runIds } from './todo'
 import type { ChangedFile, ChatProfile, HubState, RepoView, ToolCall } from './hub-types'
 
 export const emptyHub = (): HubState => ({
@@ -12,7 +13,7 @@ export const emptyHub = (): HubState => ({
   projects: [],
   controls: {
     claude: { tui: 'default', statusLine: false, push: false, needInput: false },
-    switchboard: { hooks: false, statusBar: true, idleMinutes: 15, brief: true, askBrain: true, syncRules: true },
+    switchboard: { hooks: false, statusBar: true, idleMinutes: 15, brief: true, askBrain: true, syncRules: true, accessNote: true, name: '' },
     statusLineReady: false,
   },
   chats: [], rcServers: [], ais: [], starred: [], progress: [], archive: [],
@@ -22,7 +23,7 @@ export const emptyHub = (): HubState => ({
 
 const DEMO_TAILNET = 'http://mac.tail1234.ts.net'
 // Same list as extension/src/hub/tools.ts FLAGGED.
-const DEMO_FLAGGED = ['auth0@claude-plugins-official', 'stitch-build@google-labs-code-stitch-skills', 'stitch-design@google-labs-code-stitch-skills', 'stitch-utilities@google-labs-code-stitch-skills']
+const DEMO_FLAGGED: string[] = []
 /** The extension asks a model; the demo turns on what the goal names, plus superpowers, and never a flagged one. */
 const demoPick = (h: HubState, goal: string): ChatProfile => {
   const g = goal.toLowerCase(), named = (n: string) => g.includes(n.split('@')[0].split('-')[0])
@@ -45,7 +46,7 @@ export function demoHub(now = Date.now()): HubState {
     ...emptyHub(),
     controls: {
       claude: { model: 'opus', tui: 'fullscreen', statusLine: false, push: true, needInput: true },
-      switchboard: { hooks: true, statusBar: true, idleMinutes: 15, brief: true, askBrain: true, syncRules: true },
+      switchboard: { hooks: true, statusBar: true, idleMinutes: 15, brief: true, askBrain: true, syncRules: true, accessNote: true, name: '' },
       statusLineReady: true,
     },
     projects: [
@@ -67,6 +68,20 @@ export function demoHub(now = Date.now()): HubState {
       { pid: 5, sessionId: 'd-wrap', takes: true, name: 'Accurate Done state', cwd: '/Users/k/GitHub/agent-flow', link: '', live: true, why: [] },
       { pid: 4, sessionId: 'd-idle', name: 'Kit cleanup', cwd: '/Users/k/GitHub/claude-mods', link: '', live: true, why: [] },
     ],
+    // Several items, one prerequisite, one in progress, one from a finished chat, one whose chat ended; agent-flow's show as "in other projects".
+    todos: {
+      '/Users/k/GitHub/Armasu': { sync: { state: 'synced', canSync: true }, todo: [
+        { id: 'dt1', text: 'Add CSV export to the receipts page', at: now - 3 * DAY },
+        { id: 'dt2', text: 'Put a Stripe test key in .env.local', at: now - 2 * DAY, before: 'dt1', from: 'd-work' },
+        { id: 'dt3', text: 'Fix the login redirect on Safari', at: now - DAY, chat: 'd-work' },
+        { id: 'dt4', text: 'Check the outfit picker on a real phone', at: now - 5 * 60e3, from: 'd-gone' },
+        { id: 'dt5', text: 'Move the route release preset to the shared kit', at: now - 60 * 60e3, chat: 'd-gone' },
+      ], ticked: [{ id: 'dt6', text: 'Show the login error under the form', at: now - 20 * 60e3, by: 'd-done', from: 'd-work' }] },
+      '/Users/k/GitHub/agent-flow': { sync: { state: 'local', why: 'public repo', canSync: true }, todo: [
+        { id: 'da1', text: 'Rebuild the vsix and reload VS Code', at: now - 4 * 60e3, from: 'd-almost' },
+        { id: 'da2', text: 'Check the phone layout on a real device', at: now - 4 * 60e3, from: 'd-almost' },
+      ] },
+    },
     progress: [
       { sessionId: 'd-work', cwd: '/Users/k/GitHub/Armasu', state: 'working', startedAt: now - 30 * 60e3, at: now,
         roles: [...demoRuns(11_000, now), JEV_ROLE],
@@ -83,7 +98,9 @@ export function demoHub(now = Date.now()): HubState {
           { tool: 'Write', target: 'auth/redirect.test.ts', role: 'engineer', at: now - 20e3 },
           { tool: 'Edit', target: 'auth/middleware.ts', role: 'engineer', at: now - 5e3 },
           { ...JEV_CALL, at: now - 3e3 },
-        ] },
+        ],
+        tests: { command: 'npx tsx --test auth/*.test.ts', ok: false, at: now - 2 * 60e3, failed: 2, total: 538, first: 'redirects once after a Safari login',
+          tail: ['ℹ tests 538', 'ℹ pass 536', 'ℹ fail 2', 'ℹ duration_ms 4210', '✖ failing tests:', '✖ redirects once after a Safari login (4.1ms)', '  AssertionError: expected 1 redirect, got 3', '✖ keeps the session cookie on refresh (2.7ms)'] } },
       { sessionId: 'd-done', cwd: '/Users/k/GitHub/agent-flow', state: 'done', startedAt: now - 42 * 60e3, at: now - 60e3,
         roles: (['researcher', 'engineer', 'qa'] as const).map((role, i) => ({ id: `${role[0]}1`, role, state: 'done' as const, startedAt: now - (40 - i * 10) * 60e3 })),
         tasks: [{ id: '1', subject: 'Types', status: 'completed' }, { id: '2', subject: 'AI registry', status: 'completed' }],
@@ -94,7 +111,7 @@ export function demoHub(now = Date.now()): HubState {
           { tool: 'Edit', target: 'hub/types.ts', role: 'engineer', at: now - 5 * 60e3 },
           { tool: 'Bash', target: 'pnpm test', role: 'qa', at: now - 2 * 60e3 },
         ] },
-      // Finished, but its standup still lists Left items: almost done, in teal.
+      // Finished, but one request is not covered: almost done, in teal. Its Left items are in the to-do.
       { sessionId: 'd-almost', cwd: '/Users/k/GitHub/agent-flow', state: 'done', startedAt: now - 70 * 60e3, at: now - 4 * 60e3,
         roles: (['researcher', 'engineer', 'qa', 'designer'] as const).map((role, i) => ({ id: `${role[0]}2`, role, state: 'done' as const, startedAt: now - (65 - i * 12) * 60e3 })),
         tasks: [{ id: '1', subject: 'Parse the standup', status: 'completed', role: 'engineer' }, { id: '2', subject: 'Receipt on the card', status: 'completed', role: 'designer' }, { id: '3', subject: 'QA pass', status: 'completed', role: 'qa' }],
@@ -167,14 +184,14 @@ export function demoHub(now = Date.now()): HubState {
     tools: { flagged: DEMO_FLAGGED, pick: null, chats: { 'd-work': { plugins: { 'superpowers@superpowers-dev': true, 'aws-core@claude-plugins-official': false, 'stitch-design@google-labs-code-stitch-skills': false }, skills: { 'claude-x-jev': false, phone: false }, assets: { 'docs/design/raycast-DESIGN.md': true } } } },
     installed: [
       { kind: 'mod', name: 'usage-meter@kenneth-mods', enabled: true }, { kind: 'mod', name: 'repo-rules@kenneth-mods', enabled: true }, { kind: 'mod', name: 'paid-guard@kenneth-mods', enabled: true },
-      { kind: 'plugin', name: 'superpowers@superpowers-dev', enabled: true, skills: ['brainstorming', 'test-driven-development', 'writing-plans'] }, { kind: 'plugin', name: 'aws-core@claude-plugins-official', enabled: true }, { kind: 'plugin', name: 'stitch-design@google-labs-code-stitch-skills', enabled: false },
-      { kind: 'skill', name: 'claude-x-jev', enabled: true }, { kind: 'skill', name: 'phone', enabled: true }, { kind: 'skill', name: 'drei', enabled: false },
+      { kind: 'plugin', name: 'superpowers@superpowers-dev', enabled: true, skills: ['brainstorming', 'test-driven-development', 'writing-plans'], description: 'Planning, test-first coding and review habits for every chat.' }, { kind: 'plugin', name: 'aws-core@claude-plugins-official', enabled: true, description: 'AWS docs, CLI help and account checks.' }, { kind: 'plugin', name: 'stitch-design@google-labs-code-stitch-skills', enabled: false },
+      { kind: 'skill', name: 'claude-x-jev', enabled: true, description: 'Sorts and scores many items cheaply with Jev.' }, { kind: 'skill', name: 'phone', enabled: true, description: 'Sends a push notification to your phone.' }, { kind: 'skill', name: 'drei', enabled: false },
       { kind: 'role', name: 'researcher', enabled: true, model: 'haiku' }, { kind: 'role', name: 'engineer', enabled: true, model: 'opus' }, { kind: 'role', name: 'qa', enabled: true, model: 'opus' },
       { kind: 'role', name: 'designer', enabled: true, model: 'opus' }, { kind: 'role', name: 'ops', enabled: true, model: 'haiku' }, { kind: 'role', name: 'growth', enabled: true, model: 'sonnet' },
       { kind: 'preset', name: 'armasu-copy-check', enabled: true }, { kind: 'preset', name: 'armasu-route-release', enabled: true },
     ],
     connections: [
-      { kind: 'mcp', name: 'openrouter', status: 'on', detail: 'Armasu' }, { kind: 'mcp', name: 'aws-mcp', status: 'error', detail: 'sign in' },
+      { kind: 'mcp', name: 'openrouter', status: 'on', detail: 'Armasu' }, { kind: 'mcp', name: 'aws-mcp', status: 'error', detail: 'sign in' }, { kind: 'app', name: 'Claude Docs', status: 'on' },
       { kind: 'project', name: 'Armasu', status: 'on', detail: 'Claude Code history' }, { kind: 'project', name: 'CSEN122', status: 'on', detail: 'Claude Code history' },
       { kind: 'window', name: 'Armasu', status: 'on', detail: 'Switchboard window' }, { kind: 'repo', name: 'Gemini-Test', status: 'on', detail: 'GitHub' },
     ],
@@ -243,7 +260,7 @@ export function demoTick(h: HubState, now: number): HubState {
       const j = ROLES.indexOf(t.role ?? ''), later = p.tasks.slice(n + 1).some(u => u.role === t.role)
       return { ...t, status: j < i || (j === i && later) ? 'completed' : j === i ? 'in_progress' : 'pending' }
     }),
-    tools: [...(p.tools ?? []), call].slice(-8),
+    tools: [...(p.tools ?? []), call].slice(-200),
   }) }
 }
 
@@ -280,6 +297,29 @@ const demoRepo = (h: HubState, sessionId: string): RepoView => {
     branches: [branch, 'main', 'design/outfit-copy'].filter((b, i, a) => a.indexOf(b) === i), sync: { kind: 'push', label: 'Push 2' },
     log: [{ hash: 'a41c9e2', subject: 'Wrote the failing redirect test', when: '12 minutes ago' }, { hash: '7d03b18', subject: 'Read the session cookie on Safari', when: '40 minutes ago' }, { hash: '1f9e0aa', subject: 'Add login page hero', when: '2 days ago' }],
     stashes: 0, github: `https://github.com/kennykennethkkang/${cwd.split('/').pop()}`, at: Date.now(),
+    ...(sessionId === 'd-work' ? demoMerge(Date.now()) : {}),
+  }
+}
+
+/** The PR and CI cards: main moved on under the login fix, with Lena's key rotation on the same lines, and CI failed on it. */
+const demoMerge = (now: number): Pick<RepoView, 'pr' | 'merge' | 'ci'> => {
+  const ago = (m: number) => now - m * 60e3
+  return {
+    ci: { id: 9182736451, workflow: 'CI', status: 'completed', conclusion: 'failure', url: 'https://github.com/kennykennethkkang/Armasu/actions/runs/9182736451', sha: 'a41c9e2', at: ago(3),
+      jobs: [{ name: 'lint', status: 'completed', conclusion: 'success' }, { name: 'typecheck', status: 'completed', conclusion: 'success' }, { name: 'test (node 22)', status: 'completed', conclusion: 'failure', step: 'npm test' }, { name: 'build', status: 'completed', conclusion: 'skipped' }] },
+    pr: { url: 'https://github.com/kennykennethkkang/Armasu/pull/128', state: 'OPEN', title: 'Stop the login redirect loop on Safari', number: 128, additions: 482, deletions: 37, base: 'main' },
+    merge: {
+      base: 'main', behind: 4, files: 3,
+      conflicts: [
+        { path: 'auth/auth.ts', by: 'Lena', line: 42, theirs: 'const key = await rotateSessionKey(user.id)', ours: 'const key = readSessionKey(req, { safari: true })' },
+        { path: 'auth/middleware.ts', by: 'Lena', line: 18, theirs: 'if (!session || session.expired) return redirect(\'/login\')', ours: 'if (!session && !isLogin(req)) return redirect(\'/login\')' },
+        { path: 'lib/session.ts', by: 'Lena', line: 7, theirs: 'export const KEY_TTL = 60 * 60', ours: '' },
+      ],
+      commits: [
+        { hash: 'a41c9e2', author: 'You', at: ago(0) }, { hash: 'c7e21f0', author: 'Lena', at: ago(6) }, { hash: '7d03b18', author: 'You', at: ago(18) },
+        { hash: '5b8d4a1', author: 'Lena', at: ago(41) }, { hash: '0e6f3c9', author: 'Sam', at: ago(120) },
+      ],
+    },
   }
 }
 
@@ -338,6 +378,7 @@ export function demoApply(h: HubState, c: HubCommand): HubState {
       const done = (text: string, patch: Partial<RepoView> = {}) => ({ ...h, repo: { ...r, ...patch, result: { text: `Demo: ${text}`, ok: true, at: Date.now() } } })
       if (c.op === 'commit') return done(`committed ${c.files?.length ?? 0} files to ${r.branch}`, { files: r.files.filter(f => !c.files?.includes(f.path)), ahead: r.ahead + 1, sync: { kind: 'push', label: `Push ${r.ahead + 1}` } })
       if (c.op === 'sync') return done(`pushed ${r.ahead} commits to ${r.upstream}`, { ahead: 0, sync: { kind: 'fetch', label: 'Fetch' } })
+      if (c.op === 'rerun' && r.ci) return done(`re-running the failed jobs in ${r.ci.workflow}`, { ci: { ...r.ci, status: 'in_progress', conclusion: undefined, jobs: r.ci.jobs.map(j => j.conclusion === 'success' ? j : { name: j.name, status: 'queued' }) } })
       return done(`git ${c.op} would run here`)
     }
     case 'hub-search': {
@@ -417,6 +458,30 @@ export function demoApply(h: HubState, c: HubCommand): HubState {
       const { port: _p, link: _l, ...stopped } = row
       const next = c.type === 'hub-dev-stop' ? stopped : row.port ? row : { ...row, port: 5173, link: `${DEMO_TAILNET}:15173` }
       return { ...h, dev: h.dev?.map(d => (d === row ? next : d)) }
+    }
+    case 'hub-todo-add':
+    case 'hub-todo-edit':
+    case 'hub-todo-remove':
+    case 'hub-todo-restore':
+    case 'hub-todo-run': {
+      const list = h.todos?.[c.path]
+      if (!list) return h
+      const set = (l: typeof list) => ({ ...h, todos: { ...h.todos, [c.path]: l } })
+      const now = Date.now(), id = `dt-${now.toString(36)}`
+      if (c.type === 'hub-todo-add') return c.text.trim() ? set({ ...list, todo: [...list.todo, { id, text: c.text.trim(), at: now }] }) : h
+      if (c.type === 'hub-todo-edit') return set({ ...list, todo: list.todo.map(t => (t.id === c.id ? { ...t, text: c.text.trim() || t.text, at: now } : t)) })
+      if (c.type === 'hub-todo-remove') return set({ ...list, todo: list.todo.filter(t => t.id !== c.id) })
+      if (c.type === 'hub-todo-restore') {
+        const t = list.ticked?.find(x => x.id === c.id)
+        if (!t) return h
+        const { id: _i, at: _a, by: _b, ...more } = t
+        return set({ ...list, ticked: list.ticked!.filter(x => x !== t), todo: [...list.todo, { ...more, id, at: now }] })
+      }
+      // Run: a new demo chat (or the one named) takes the items and their open prerequisites.
+      const run = runIds(list.todo, c.ids), items = list.todo.filter(t => run.has(t.id))
+      const started = c.to ? h : demoApply(h, { type: 'hub-new-chat', path: c.path, text: items.map(t => t.text).join('; '), remote: false })
+      const chat = c.to ?? started.chats[0].sessionId
+      return { ...started, todos: { ...h.todos, [c.path]: { ...list, todo: list.todo.map(t => (run.has(t.id) ? { ...t, chat, at: now } : t)) } } }
     }
     case 'hub-awake': return { ...h, awake: c.on }
     case 'hub-rc-server': return { ...h, rcServers: h.rcServers.map(r => (r.folder === c.folder ? { ...r, on: c.on } : r)) }

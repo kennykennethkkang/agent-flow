@@ -10,12 +10,11 @@ import * as os from 'os'
 import * as path from 'path'
 import { recentSessionDirs } from '../codex-session-watcher'
 import { readChains, withChains } from './chains'
-import { newChatCommand, noteTo } from './projects'
+import { newChatCommand, noteTo, shellQuote, type Shell } from './projects'
 import { readChats } from './sessions'
 import { resumeSettingsArg } from './tools'
 import type { AiId, AiStatus, ChatRow } from './types'
 
-type Shell = 'posix' | 'powershell'
 
 /** A message typed into a Codex terminal as one paste, so its newlines do not submit; undefined when it holds a control character other than LF or TAB. */
 // eslint-disable-next-line no-control-regex
@@ -68,24 +67,26 @@ export async function closeChatTerminal(pid: number, terminals: readonly Closabl
 }
 
 /** Where a CLI lives on PATH, for a terminal that runs it with no shell around it. */
-export const cliPath = (cli: string) => new Promise<string | undefined>(done => execFile('which', [cli], (err, out) => done(err ? undefined : String(out).trim() || undefined)))
+/** which's first line; Windows' where also lists npm's extensionless sh shim, which cannot run there. */
+export const pickCli = (out: string, platform: NodeJS.Platform = process.platform) => {
+  const l = out.split(/\r?\n/).map(x => x.trim()).filter(Boolean)
+  return (platform === 'win32' ? l.find(x => /\.(exe|cmd)$/i.test(x)) : undefined) ?? l[0]
+}
+export const cliPath = (cli: string) => new Promise<string | undefined>(done => execFile(process.platform === 'win32' ? 'where' : 'which', [cli], { windowsHide: true }, (err, out) => done(err ? undefined : pickCli(String(out)))))
 
 export type Ai = {
   name: string
   detect: () => Promise<{ installed: boolean; detail?: string }>
   chats: () => Promise<ChatRow[]>
   startCommand: (o: { text?: string; name?: string }, shell: Shell) => string
-  resumeCommand: (sessionId: string) => string
+  /** extra: a system note for this resume (the name note); starred digests leave it out. */
+  resumeCommand: (sessionId: string, extra?: string) => string
 }
 
 const LIVE_MS = 10 * 60 * 1000
 const HEAD_BYTES = 512 * 1024
 const TAIL_BYTES = 256 * 1024
 const CODEX_FILES = 20
-const quote = (s: string, shell: Shell) => {
-  const one = s.replace(/\s+/g, ' ').trim()
-  return shell === 'posix' ? `'${one.replace(/'/g, `'\\''`)}'` : `'${one.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`
-}
 const onPath = async (cli: string) => !!(await cliPath(cli))
 
 type Line = { type?: string; payload?: { id?: string; cwd?: string; type?: string; message?: string; info?: { last_token_usage?: { input_tokens?: number }; model_context_window?: number } } }
@@ -201,7 +202,7 @@ export const AIS: Record<AiId, Ai> = {
     chats: async () => (await readChats()).map(c => ({ ...c, ai: 'claude' as const })),
     startCommand: (o, shell) => newChatCommand(o, shell),
     // A chat with a tool profile resumes with it: --settings applies on resume too.
-    resumeCommand: id => `claude --resume ${id}${resumeSettingsArg(id)}`,
+    resumeCommand: (id, extra) => `claude --resume ${id}${resumeSettingsArg(id, undefined, extra)}`,
   },
   codex: {
     name: 'Codex',
@@ -211,7 +212,7 @@ export const AIS: Record<AiId, Ai> = {
       return { installed: false, detail: home ? 'CLI not installed: npm i -g @openai/codex' : 'Not set up' }
     },
     chats: codexChats,
-    startCommand: (o, shell) => (o.text?.trim() ? `codex ${quote(o.text, shell)}` : 'codex'),
+    startCommand: (o, shell) => (o.text?.trim() ? `codex ${shellQuote(o.text, shell)}` : 'codex'),
     resumeCommand: id => `codex resume ${id}`,
   },
 }

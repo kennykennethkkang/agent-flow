@@ -4,7 +4,7 @@
  * Pure, so the tests drive it with recorded payloads; hub-service.ts keeps the results.
  */
 import { createHash } from 'crypto'
-import type { Ask, AskQuestion, BgJob, ChatProgress, Report, RoleStep, TaskRow, ToolCall } from './types'
+import type { Ask, AskQuestion, BgJob, Choice, ChatProgress, OtherPick, Report, RoleStep, TaskRow, TestRun, ToolCall } from './types'
 
 type Payload = Record<string, unknown>
 const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
@@ -40,6 +40,37 @@ function bgJob(tool: string, payload: Payload, now: number): BgJob | undefined {
   return { id, ...(label ? { label } : {}), ...(task ? { task } : {}), startedAt: now }
 }
 
+// One step of a shell chain, past env assignments.
+const RUNNER = /^(?:(?:npm|pnpm|yarn|bun)(?:\s+run)?\s+test\b|(?:npx\s+|bunx\s+|pnpm\s+exec\s+)?(?:tsx|node)\s(?:.*\s)?--test\b|(?:npx\s+|bunx\s+|pnpm\s+exec\s+|yarn\s+)?(?:vitest|jest)\b|(?:python3?\s+-m\s+|uv\s+run\s+)?pytest\b|go\s+test\b|cargo\s+test\b|claude\s+plugin\s+test\b)/
+/** Whether a Bash command runs tests: a runner as the command word of some step, quoted text dropped first. Not a full shell parse. */
+export const isTestCommand = (cmd: string) => cmd.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, '""').split(/&&|\|\||[;|(\n]/).some(s => RUNNER.test(s.trim().replace(/^(?:\w+=\S*\s+)+/, '')))
+
+// First failing test name, per runner: tap, node spec, vitest, jest, pytest, go, cargo.
+const FIRST = [/^\s*not ok \d+ - (.+?)\s*(?:#.*)?$/m, /^\s*✖ (?!failing tests)(.+?)(?:\s+\([\d.]+m?s\))?$/m, /^\s*[×✕✗] (.+?)(?:\s+\d+(?:\.\d+)?m?s)?$/m,
+  /^\s*● (.+)$/m, /^FAILED \S*::(\S+)/m, /^\s*--- FAIL: (\S+)/m, /^test (\S+) \.\.\. FAILED$/m]
+const num = (re: RegExp, s: string) => { const m = re.exec(s); return m ? Number(m[1]) : undefined }
+
+/** Counts, the first failing name and the last 8 lines of a test run's output, when it says. */
+export function testOutcome(out: string): { failed?: number; total?: number; first?: string; tail: string[] } {
+  const failed = num(/^[#ℹ]\s*fail (\d+)/m, out) ?? num(/(\d+) (?:failed|failing)\b/, out)
+  const passed = num(/(\d+) (?:passed|passing)\b/, out)
+  const total = num(/(\d+) total\b/, out) ?? num(/^[#ℹ]\s*tests (\d+)/m, out) ?? num(/^\s*Tests?\s.*\((\d+)\)/m, out) ?? (passed !== undefined ? passed + (failed ?? 0) : undefined)
+  const first = FIRST.map(re => re.exec(out)?.[1]).find(Boolean)
+  const tail = out.split('\n').map(l => plainText(l).trimEnd().slice(0, 160)).filter(l => l.trim()).slice(-8)
+  return { ...(failed !== undefined ? { failed } : {}), ...(total !== undefined ? { total } : {}), ...(first ? { first: cut(first, 120)! } : {}), tail }
+}
+
+/** A finished test command; a pipe into tail exits 0, so a failed count counts too. Background and interrupted runs say nothing yet. */
+function testRun(event: string, payload: Payload, now: number): TestRun | undefined {
+  const command = str((payload.tool_input as Payload | undefined)?.command)
+  if (payload.tool_name !== 'Bash' || !command || !isTestCommand(command)) return undefined
+  const res = (payload.tool_response ?? {}) as Payload
+  if (payload.is_interrupt === true || (event === 'PostToolUse' && (res.interrupted === true || str(res.backgroundTaskId)))) return undefined
+  const out = event === 'PostToolUse' ? `${res.stdout ?? ''}\n${res.stderr ?? ''}` : String(payload.error ?? '').replace(/^Exit code \d+\n?/, '')
+  const { tail, ...o } = testOutcome(out)
+  return { command: cut(command, 160)!, ok: event === 'PostToolUse' && !o.failed, at: now, ...o, ...(tail.length ? { tail } : {}) }
+}
+
 /** Nothing runs any more: Done if the lead's last turn finished the work, else idle. */
 const settled = (p: ChatProgress, now: number): ChatProgress => p.finishing ? { ...p, state: 'done', finishedAt: now } : { ...p, state: 'idle' }
 
@@ -71,6 +102,8 @@ export function standup(text: string): Report | undefined {
   let at: keyof Report | null = null, found = false, fence = false
   const add = (v: string) => {
     const item = cut(v.replace(/\*\*|__/g, ''), REPORT_ITEM)
+    // "Three are new from this chat:" heads the items under it.
+    if (item?.endsWith(':')) return
     if (at && item && out[at].length < REPORT_MAX) out[at].push(item)
   }
   for (const line of text.split('\n')) {
@@ -97,7 +130,7 @@ export function standup(text: string): Report | undefined {
     const item = ITEM.exec(line)
     if (item) add(item[1])
     else if (t && at && /^\s/.test(line) && out[at].length) out[at][out[at].length - 1] = cut(`${out[at][out[at].length - 1]} ${t}`, REPORT_ITEM)!
-    else if (t) at = null
+    else if (t && !t.endsWith(':')) at = null
   }
   for (const k of ['done', 'left'] as const) if (out[k].length === 1 && NONE.test(out[k][0])) out[k] = []
   return found ? out : undefined
@@ -201,23 +234,52 @@ export function questionAsk(id: string, input: Payload): Ask | undefined {
   return questions.length && questions.length === raw.length ? { id: cut(id, 80) ?? id, kind: 'question', tool: 'AskUserQuestion', options: [], questions } : undefined
 }
 
+export const OTHER_MAX = 200
+/** Other text as it may go into a terminal: no control characters (so no escapes or newlines), one line, cut short. */
+// Cut by code point, so an emoji at the cut is never halved.
+export const otherText = (s: string) => Array.from(s.replace(/[\p{Cc}\u2028\u2029]/gu, ' ').replace(/\s+/g, ' ').trim()).slice(0, OTHER_MAX).join('').trim()
+
+const DOWN = '\x1b[B'
+const isOther = (c: Choice[number]): c is OtherPick => typeof c === 'object' && !Array.isArray(c)
+
 /**
- * The keys an answer takes in the terminal, or why it cannot be typed. Checked against claude 2.1.312:
+ * The keys an answer takes in the terminal, or why it cannot be typed. Checked against claude 2.1.314:
  * a permission dialog takes 1 for Yes and 2 for its first suggestion; No has no fixed number (auto mode's
- * option sits before it), so it goes as Esc, which the dialog reads as No. AskUserQuestion takes the
- * option's number per question; a multi-select one needs arrows, so it stays in the terminal.
+ * option sits before it), so it goes as Esc, which the dialog reads as No.
+ * AskUserQuestion: a single-select question takes the option's number and moves on; its Other (Type something,
+ * one past the options) takes the number, the text and Enter. A multiSelect question toggles by number without
+ * moving the cursor, which stays on row 1; Down walks to Type something (typing ticks it) and on to Next, then
+ * Enter. Several questions, or any multiSelect one, end on a review whose option 1 is Submit.
  */
-export function askKeys(ask: Ask, choice: number[]): string[] | string {
+export function askKeys(ask: Ask, picked: Choice): string[] | string {
+  const bad = 'that is not one of the options'
   if (ask.kind === 'permission') {
-    const i = choice[0]
-    if (choice.length !== 1 || !(i >= 0 && i < ask.options.length)) return 'that is not one of the options'
+    const i = picked[0]
+    if (picked.length !== 1 || typeof i !== 'number' || !(i >= 0 && i < ask.options.length)) return bad
     return [i === ask.options.length - 1 ? '\x1b' : String(i + 1)]
   }
-  // One number per question picks and moves on; several end on a review whose option 1 is Submit.
   const qs = ask.questions ?? []
-  if (qs.some(q => q.multiSelect)) return 'several picks go in the terminal'
-  if (choice.length !== qs.length || choice.some((i, n) => !(i >= 0 && i < qs[n].options.length))) return 'that is not one of the options'
-  return [...choice.map(i => String(i + 1)), ...(qs.length > 1 ? ['1'] : [])]
+  if (picked.length !== qs.length) return bad
+  const keys: string[] = []
+  for (const [n, q] of qs.entries()) {
+    const c = picked[n], n1 = q.options.length
+    const other = isOther(c) ? otherText(String(c.other ?? '')) : undefined
+    if (other === '') return 'type something for Other'
+    const picks = isOther(c) ? c.picks ?? [] : [c].flat()
+    if (!picks.every(i => Number.isInteger(i) && i >= 0 && i < n1) || new Set(picks).size !== picks.length) return bad
+    if (!q.multiSelect) {
+      if (Array.isArray(c)) return bad
+      if (other !== undefined && !picks.length) keys.push(String(n1 + 1), other, '\r')
+      else if (picks.length === 1 && other === undefined) keys.push(String(picks[0] + 1))
+      else return bad
+      continue
+    }
+    if (!picks.length && other === undefined) return 'pick at least one'
+    keys.push(...picks.map(i => String(i + 1)))
+    if (other !== undefined) keys.push(...Array(n1).fill(DOWN), other, DOWN, '\r')
+    else keys.push(...Array(n1 + 1).fill(DOWN), '\r')
+  }
+  return qs.length > 1 || qs.some(q => q.multiSelect) ? [...keys, '1'] : keys
 }
 
 // ponytail: newest MAX_ASKS kept; more parallel prompts than that lose the oldest until Stop clears them.
@@ -235,6 +297,9 @@ function withAsks(p: ChatProgress, asks: Ask[]): ChatProgress {
 }
 const pendingAsks = (p: ChatProgress) => p.asks ?? (p.ask ? [p.ask] : [])
 
+/** p with a prompt from the ask tool, once. */
+export const addAsk = (p: ChatProgress, ask: Ask): ChatProgress => pendingAsks(p).some(a => a.id === ask.id) ? p : withAsks(p, [...pendingAsks(p), ask])
+
 /** p without the prompt answered from Switchboard; the next one waiting shows. */
 export function dropAsk(p: ChatProgress, askId: string): ChatProgress {
   const asks = pendingAsks(p)
@@ -243,6 +308,8 @@ export function dropAsk(p: ChatProgress, askId: string): ChatProgress {
 
 /** Running subagents always stay; finished ones only the newest MAX_DONE. */
 const MAX_DONE = 12
+/** Tool calls kept per chat, for the Lanes timeline; each is tool, a 48-char target, role and time (about 90 bytes). */
+export const TOOLS_MAX = 200
 function trim(roles: RoleStep[]): RoleStep[] {
   let drop = roles.filter(r => r.state === 'done').length - MAX_DONE
   return drop > 0 ? roles.filter(r => r.state !== 'done' || drop-- <= 0) : roles
@@ -289,7 +356,7 @@ export function step(prev: ChatProgress | undefined, payload: Payload, now: numb
       const input = (payload.tool_input ?? {}) as Payload
       const target = toolTarget(tool, input)
       const call: ToolCall = { tool, ...(target ? { target } : {}), role: sub ? role ?? 'subagent' : 'lead', at: now }
-      p.tools = [...(p.tools ?? []), call].slice(-8)
+      p.tools = [...(p.tools ?? []), call].slice(-TOOLS_MAX)
       // A subagent's own TodoWrite is its private list; only the shared task tools reach the chat's list.
       if (sub) return tool === 'TodoWrite' ? p : { ...p, tasks: tasksFrom(p, tool, input, now) }
       delete p.limited
@@ -306,7 +373,8 @@ export function step(prev: ChatProgress | undefined, payload: Payload, now: numb
       if (sub) return p
       // Kenneth's own asks, for the done receipt; mod prompts, task notifications and bare reminders are not his.
       const said = cut(String(payload.prompt ?? '').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ''), ASKED_ITEM)
-      const q = said && !/^(Switchboard:|<task-notification>)/.test(said) ? { ...p, asked: [...(p.asked ?? []), said].slice(-ASKED_MAX) } : p
+      // covered scores the old asks by index, so a new one drops them.
+      const q: ChatProgress = said && !/^(Switchboard:|<task-notification>)/.test(said) ? { ...p, asked: [...(p.asked ?? []), said].slice(-ASKED_MAX), covered: undefined } : p
       // While limited the prompt may fail with no hook at all; the warning stays until real progress.
       return q.limited ? q : { ...q, state: 'working', ...NO_ASK, waiting: undefined }
     }
@@ -314,6 +382,8 @@ export function step(prev: ChatProgress | undefined, payload: Payload, now: numb
     case 'PostToolUseFailure': {
       const job = event === 'PostToolUse' && !sub ? bgJob(str(payload.tool_name) ?? '', payload, now) : undefined
       if (job) p.jobs = [...(p.jobs ?? []).filter(j => j.id !== job.id), job]
+      const tests = testRun(event, payload, now)
+      if (tests) p.tests = tests
       // A subagent stopped with TaskStop sends no SubagentStop, a stopped shell no notification.
       const stopped = event === 'PostToolUse' && !sub && payload.tool_name === 'TaskStop' ? str((payload.tool_input as Payload | undefined)?.task_id) : undefined
       if (stopped && p.jobs) {
@@ -391,18 +461,16 @@ export function settle(p: ChatProgress, now: number): ChatProgress {
 
 /** At or under this Jev score, a request counts as not covered (coverage.ts). */
 export const MISSED = 0.2
-/** Requests Jev says the Done list does not cover. */
-export const missed = (p: ChatProgress) => (p.asked ?? []).filter((_, i) => { const s = p.covered?.[i]; return s !== null && s !== undefined && s <= MISSED })
-/** Done, but the standup still lists Left items or Jev finds a request not covered. */
-export const almostDone = (p: ChatProgress) => p.state === 'done' && (!!p.report?.left.length || missed(p).length > 0)
+/** Requests Jev says the Done list does not cover; scores for another set of asks count for nothing. */
+export const missed = (p: ChatProgress) => p.covered?.length !== p.asked?.length ? [] : (p.asked ?? []).filter((_, i) => { const s = p.covered?.[i]; return s !== null && s !== undefined && s <= MISSED })
+/** Done, but Jev finds a request not covered. Left items are future work; they go to the to-do (todo.ts). */
+export const almostDone = (p: ChatProgress) => p.state === 'done' && missed(p).length > 0
 /** What a notification says; the same key twice in a row for one chat is shown once. Almost done and finished differ, so finishing notifies again. */
 export const notifyKey = (p: ChatProgress) => `${almostDone(p) ? `almost ${missed(p).length}` : p.state}\n${(p.state === 'done' ? p.commit : p.question) ?? ''}`
 /** A done chat's notification line. */
 export const doneText = (p: ChatProgress) => missed(p).length
   ? `almost done, ${missed(p).length} of your requests not covered: ${missed(p)[0]}`
-  : almostDone(p)
-  ? `almost done, ${p.report!.left.length} left: ${p.report!.left[0]}`
-  : `finished${p.tasks.length ? `, all ${p.tasks.length} task${p.tasks.length === 1 ? '' : 's'} done` : ''}`
+  : `finished${p.tasks.length ? `, all ${p.tasks.length} task${p.tasks.length === 1 ? '' : 's'} done` : ''}${p.report?.left.length ? `, ${p.report.left.length} to the to-do` : ''}`
 export const shouldNotify = (prevKey: string | undefined, p: ChatProgress) => (p.state === 'done' || p.state === 'needs-you') && notifyKey(p) !== prevKey
 /** Whether to show p, and the key to keep. Leaving needs-you forgets the question, so the same prompt asked again shows again; a Done key stays. */
 export function notifyStep(prevKey: string | undefined, p: ChatProgress): { show: boolean; key?: string } {
@@ -432,4 +500,24 @@ export function todayText(all: ChatProgress[], name: (p: ChatProgress) => string
   const x = a.split('.').map(Number), y = b.split('.').map(Number)
   for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]
   return false
+}
+
+// Windows PowerShell's own app id, so the toast needs no registered app. The text rides in env, never in the script.
+const TOAST = [
+  '[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null',
+  '$x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)',
+  '$t = $x.GetElementsByTagName("text")',
+  '$t.Item(0).AppendChild($x.CreateTextNode($env:SWITCHBOARD_TITLE)) > $null',
+  '$t.Item(1).AppendChild($x.CreateTextNode($env:SWITCHBOARD_TEXT)) > $null',
+  '[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe").Show([Windows.UI.Notifications.ToastNotification]::new($x))',
+].join('; ')
+
+/** The OS notification as a command run with no shell; none on Linux. */
+export function desktopNotice(title: string, text: string, platform: NodeJS.Platform = process.platform): { cmd: string; args: string[]; env?: Record<string, string> } | undefined {
+  if (platform === 'darwin') {
+    const q = (s: string) => JSON.stringify(plainText(s))
+    return { cmd: 'osascript', args: ['-e', `display notification ${q(text)} with title ${q('Switchboard')} subtitle ${q(title)} sound name "Glass"`] }
+  }
+  if (platform === 'win32') return { cmd: 'powershell', args: ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', TOAST], env: { SWITCHBOARD_TITLE: plainText(`Switchboard: ${title}`), SWITCHBOARD_TEXT: plainText(text) } }
+  return undefined
 }

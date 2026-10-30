@@ -1,0 +1,20 @@
+{
+  "name": "kenneth-mods",
+  "owner": {
+    "name": "Kenneth Kang"
+  },
+  "plugins": [
+    {
+      "name": "usage-meter",
+      "source": "./usage-meter"
+    },
+    {
+      "name": "repo-rules",
+      "source": "./repo-rules"
+    },
+    {
+      "name": "paid-guard",
+      "source": "./paid-guard"
+    }
+  ]
+}

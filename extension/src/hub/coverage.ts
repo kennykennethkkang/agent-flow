@@ -1,5 +1,6 @@
 /**
- * Whether each thing Kenneth asked a chat for shows up as done, judged by Jev from the chat's own Done and Left lists.
+ * Whether each thing Kenneth asked a chat for shows up as done, judged by Jev from the chat's own Done list.
+ * Left is future work for the to-do, so it is not judged.
  * Runs only when the claude-x-jev skill is installed; its key comes from Kenneth's shell, so a login shell runs it.
  */
 import { execFile } from 'child_process'
@@ -10,16 +11,16 @@ import type { ChatProgress } from './types'
 
 const JEV = path.join(os.homedir(), '.claude', 'skills', 'claude-x-jev', 'scripts', 'jev.py')
 const PRESET = {
-  name: 'switchboard-request-done', version: 1, model: 'typesafe/jev-1.13',
-  description: "Was one of Kenneth's requests to a chat carried out, judging by the chat's final Done and Left lists",
-  state_fields: ['request', 'done', 'left'], display_fields: ['_id'],
-  questions: { addressed: { type: 'noul', instructions: 'Does `done` show that `request` was carried out or answered? A request that only shows up in `left` was not.' } },
+  name: 'switchboard-request-done', version: 2, model: 'typesafe/jev-1.13',
+  description: "Was one of the user's requests to a chat carried out, judging by the chat's final Done list",
+  state_fields: ['request', 'done'], display_fields: ['_id'],
+  questions: { addressed: { type: 'noul', instructions: 'Does `done` show that `request` was carried out or answered?' } },
   thresholds: { addressed: { low: 0.2, high: 0.8 } }, rules: [],
 }
 
 /** The items Jev scores, one per request. */
 export const coverageItems = (p: ChatProgress) => (p.asked ?? []).map((request, i) => ({
-  _id: String(i), request, done: (p.report?.done.length ? p.report.done : p.tasks.filter(t => t.status === 'completed').map(t => t.subject)).join('\n'), left: (p.report?.left ?? []).join('\n'),
+  _id: String(i), request, done: (p.report?.done.length ? p.report.done : p.tasks.filter(t => t.status === 'completed').map(t => t.subject)).join('\n'),
 }))
 
 /** One score per jev.py output line, by _id; undefined for a request it did not answer. */

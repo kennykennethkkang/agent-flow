@@ -1,7 +1,8 @@
 /** AWS sign-ins: reading ~/.aws/config, rewriting [default], labels, Chrome profiles and status. */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { accountOf, addProfile, awsStatus, chromeProfiles, makeDefault, parseAwsConfig, profileFor, validProfileName, validRegion } from '../src/hub/aws'
+import * as path from 'path'
+import { accountOf, addProfile, awsStatus, chromeCall, chromeProfiles, chromeState, openChromeScript, makeDefault, parseAwsConfig, profileFor, validProfileName, validRegion } from '../src/hub/aws'
 
 const ARN = (acct: string) => `arn:aws:iam::${acct}:root`
 const CONFIG = [
@@ -123,5 +124,29 @@ describe('aws status and helpers', () => {
     assert.equal(profileFor(projects, '/u/GitHub/Armasu/web'), 'yo')
     assert.equal(profileFor(projects, '/u/GitHub/agent-flow'), 'live')
     assert.equal(profileFor(projects, '/u/GitHubX'), undefined)
+  })
+
+  it('finds Chrome\'s Local State on each OS', () => {
+    assert.equal(chromeState('darwin', '/h', {}), path.join('/h', 'Library', 'Application Support', 'Google', 'Chrome', 'Local State'))
+    assert.equal(chromeState('linux', '/h', {}), path.join('/h', '.config', 'google-chrome', 'Local State'))
+    assert.equal(chromeState('win32', 'C:\\Users\\k', { LOCALAPPDATA: 'C:\\Users\\k\\AppData\\Local' }), path.join('C:\\Users\\k\\AppData\\Local', 'Google', 'Chrome', 'User Data', 'Local State'))
+    assert.equal(chromeState('win32', 'C:\\Users\\k', {}), path.join('C:\\Users\\k', 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Local State'))
+  })
+
+  it('opens a URL in one Chrome profile without a shell', () => {
+    const url = 'https://signin.aws.amazon.com/a?x=1&y=2'
+    assert.deepEqual(chromeCall(url, 'Profile 2', 'darwin', {}, () => false), { cmd: '/usr/bin/open', args: ['-na', 'Google Chrome', '--args', '--profile-directory=Profile 2', url] })
+    const pf = path.join('C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe')
+    assert.deepEqual(chromeCall(url, 'Default', 'win32', { ProgramFiles: 'C:\\Program Files', LOCALAPPDATA: 'C:\\L' }, f => f === pf), { cmd: pf, args: ['--profile-directory=Default', url] })
+    const la = path.join('C:\\L', 'Google', 'Chrome', 'Application', 'chrome.exe')
+    assert.equal(chromeCall(url, 'Default', 'win32', { ProgramFiles: 'C:\\Program Files', LOCALAPPDATA: 'C:\\L' }, f => f === la)?.cmd, la)
+    assert.equal(chromeCall(url, 'Default', 'win32', {}, () => false), undefined)
+    assert.equal(chromeCall(url, 'Default', 'linux', {}, () => false)?.cmd, 'google-chrome')
+  })
+
+  it('writes a BROWSER script on macOS and Linux only; a .cmd would split a URL at &', () => {
+    assert.match(openChromeScript('darwin')!, /\/usr\/bin\/open -na "Google Chrome" --args --profile-directory="\$SWITCHBOARD_CHROME_DIR" "\$1"/)
+    assert.match(openChromeScript('linux')!, /google-chrome --profile-directory="\$SWITCHBOARD_CHROME_DIR" "\$1"/)
+    assert.equal(openChromeScript('win32'), undefined)
   })
 })

@@ -7,8 +7,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
+      # Tests hash kit files byte for byte; keep LF on Windows too.
+      - run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
@@ -24,13 +31,15 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Root tests (scripts, app)
+        if: runner.os == 'Linux'
         run: pnpm test
 
       - name: Extension tests
         run: pnpm --dir extension test
 
       - name: Extension typecheck
-        run: pnpm --filter agent-flow run lint
+        run: pnpm --filter switchboard run lint
 
       - name: Web typecheck
+        if: runner.os == 'Linux'
         run: pnpm --dir web exec tsc --noEmit

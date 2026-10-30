@@ -53,9 +53,14 @@ function resolveNodePath(): string {
   return cachedNodePath
 }
 
+/** Claude Code runs hooks through Git Bash on Windows, where forward slashes are the safe spelling. */
+export function hookCommand(node: string, script: string, platform: NodeJS.Platform = process.platform): string {
+  const p = (s: string) => (platform === 'win32' ? s.replace(/\\/g, '/') : s)
+  return `"${p(node)}" "${p(script)}"`
+}
+
 export function getHookCommand(): string {
-  const nodePath = resolveNodePath()
-  return `"${nodePath}" "${HOOK_SCRIPT_PATH}"`
+  return hookCommand(resolveNodePath(), HOOK_SCRIPT_PATH)
 }
 
 /** Resolve and normalize a path, following symlinks where possible. */
@@ -181,7 +186,8 @@ const IS_WIN = process.platform === 'win32';
 function normPath(p) {
   let r = path.resolve(p);
   try { r = fs.realpathSync(r); } catch {}
-  return r;
+  // VS Code writes c:\, Claude Code C:\.
+  return IS_WIN ? r.toLowerCase() : r;
 }
 
 /** Check if a process is alive. On Windows, process.kill(pid, 0) is unreliable

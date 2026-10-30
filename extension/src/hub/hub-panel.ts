@@ -11,9 +11,9 @@ import { HistoryScanner } from './history'
 import { applyPatch, controlPatch, readControls } from './controls'
 import type { ChatRow, DeviceAsk, SwitchboardKey, WindowColor } from './types'
 import { SHADES, titleBar, titleBarColors, windowColors } from './colors'
-import { FLAGGED, readProfiles } from './tools'
-import { connections, ensureWeb, gitState, installed, listServers, newestPlan, newestPlanFile, phoneUrls, projectFolders, readChanges, webUrl } from './local'
-import { awsLogin, answerInTerminal, openLogin, bindCodexTerminals, startDev, stopDev, cloneProject, closeCodexChat, codexTied, sendToCodex, continueInFreshChat, exportKit, focusChat, headBranch, newChat, openDiff, openNote, openProject, pickTools, rcServer, rcServers, resumeChat, saveChatTools } from './actions'
+import { FLAGGED, cleanName, readProfiles } from './tools'
+import { connections, ensureWeb, gitState, installed, listServers, newestPlan, newestPlanFile, phoneUrls, projectFolders, readChanges, syncLibrary, webUrl } from './local'
+import { awsLogin, answerInTerminal, openLogin, bindCodexTerminals, startDev, stopDev, cloneProject, closeCodexChat, codexTied, sendToCodex, continueInFreshChat, exportKit, runSetup, focusChat, headBranch, newChat, openDiff, openNote, openProject, pickTools, rcServer, rcServers, resumeChat, saveChatTools } from './actions'
 import { chatTerminal, closeChatTerminal, codexFiles, lastCodexPrompt, readAis, rolloutLines } from './ais'
 import { dueForHandoff, fullCodex, idleHandedOff, readArchive, readChains, removeArchive, searchNotes } from './chains'
 import { newestNotes, readStarred, starredRows, toggleStar, writeStarred } from './starred'
@@ -25,16 +25,23 @@ import * as fs from 'fs'
 import { hasAgentFlowHook, readSettingsFile, removeAgentFlowHooks, writeJsonAtomic } from '../hook-entries'
 import { configureClaudeHooks } from '../hooks-config'
 import { askKeys } from './progress'
+import { answerQuestion, choiceProblem, installAsk } from './questions'
+import { claudeCall } from './setup'
 import type { ExtensionToWebviewMessage, WebviewToExtensionMessage } from '../protocol'
 import { createLogger } from '../logger'
+import { forgetAccessNote, syncAccessNote } from './access-note'
 import { Posters, tickWork } from './posters'
 import { kitHash, rulesState, syncRules, type SyncResult } from './rules'
 import { LOGINS, applyLink, applyLogin, loginFor, pruneLinks, readLinks, readLogins, writeLogins, type LinkCommand, type LoginCommand } from './logins'
 import { setRoleModel } from './roles'
 import { ghPath, gitOp, readRepo, repoRoot } from './git'
+import { addTodo, changeTodo, clearGoneChats, editTodo, loadTodos, removeItem, replaceRemoteTodo, restoreTicked, runMessage, runOrder, setTodoSync, startTodo, todoFolders } from './todo'
+import { randomUUID } from 'crypto'
 import { awakePid, devHome, devRows, knownDev, postWindow, readDev, readWindows, serve, setAwake, tailnet } from './dev'
 
 const log = createLogger('Hub')
+// Off stops updates; the note stays.
+const keepAccessNote = () => { if (hub.get().controls.switchboard.accessNote) void syncAccessNote(hub.get().phoneUrls ?? null).catch(err => log.warn('Access note failed:', err)) }
 const SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json')
 const PUSH_MS = 250
 // After the first full read a rescan only reads appended lines, so this stays cheap.
@@ -137,6 +144,8 @@ export function startHub(context: vscode.ExtensionContext): void {
   // After an update, our running browser app still serves the old copy: restart it on the new one (never starts one).
   void ensureWeb(path.join(REPO_ROOTS[0], 'agent-flow'), false, { bundle: path.join(extensionPath, 'dist', 'app', 'app.js'), version: context.extension.packageJSON.version, refresh: true })
   syncKit()
+  setupAsk(context.extensionPath)
+  syncLibrary(path.join(extensionPath, 'kit', 'design-md')).then(c => { if (c) log.info('Design library copied') }, err => log.warn(`Design library: could not copy (${(err as Error).message})`))
   envs = context.environmentVariableCollection
   readSignIns()
   const history = new HistoryScanner()
@@ -168,9 +177,11 @@ export function startHub(context: vscode.ExtensionContext): void {
       newestPlan(ws), gitState(ws), listServers(), newestNotes(stars.map(s => s.sessionId)), webDue ? webUrl() : hub.get().webUrl, refreshChats(),
     ])
     hub.set({ plan, git, servers, rcServers: rcServers(), archive: readArchive(), webUrl: web, phoneUrls: await phoneUrls(web) })
+    keepAccessNote()
     await refreshDev(servers)
     hub.set({ starred: starredRows(stars, hub.get(), notes, readChains()) })
     await refreshChanges(true)
+    await loadTodos(todoFolders(ws)).catch(err => log.warn('To-do lists failed:', err))
   }
   const near = () => refreshNear().catch(err => log.warn('Plan, git or servers failed:', err))
   onShown = () => { if (Date.now() - nearAt >= LIVE_EVERY_MS) void near() }
@@ -226,6 +237,21 @@ export function startHub(context: vscode.ExtensionContext): void {
     try { process.kill(chat.pid, 'SIGTERM') } catch { /* already gone */ }
     setTimeout(refreshHub, 800)
   }))
+}
+
+/** The ask tool's server into ~/.claude/switchboard/ask, registered with claude once; never blocks activation. */
+function setupAsk(ext: string): void {
+  try {
+    installAsk(path.join(ext, 'ask'), os.homedir(), server => {
+      const c = claudeCall(['mcp', 'add', '--scope', 'user', 'switchboard', '--', 'node', server])
+      execFile(c.cmd, c.args, { timeout: 30_000, shell: c.shell, windowsHide: true }, err => {
+        if (err) log.warn('Ask tool not registered:', err.message)
+        else log.info(`Ask tool registered: ${server}`)
+      })
+    })
+  } catch (err) {
+    log.warn('Ask tool not installed:', err)
+  }
 }
 
 /** Bundled rules and roles into ~/.claude and ~/.codex. force (Re-sync now) writes even with the switch off. */
@@ -406,6 +432,7 @@ async function refreshChats(): Promise<void> {
   const { chats, ais } = await readAis()
   bindCodexTerminals(chats)
   hub.set({ chats: chats.map(c => ({ ...c, takes: hub.takes(c, codexTied(c.sessionId)) })), ais })
+  void clearGoneChats().catch(err => log.warn('To-do lists failed:', err))
   for (const c of idleHandedOff(chats, closingCodex)) {
     closingCodex.delete(c.sessionId)
     if (!closeCodexChat(c.sessionId)) log.info(`No terminal is tied to the handed-off Codex chat ${c.sessionId.slice(0, 8)}; it stays open`)
@@ -491,6 +518,46 @@ async function runGit(m: Extract<WebviewToExtensionMessage, { type: 'hub-git' }>
   }
 }
 
+/** A to-do change, only for a project the panel lists; run starts a chat on the items or sends them to one. */
+async function todoCommand(m: Extract<WebviewToExtensionMessage, { type: `hub-todo-${string}` }>): Promise<boolean | string> {
+  const list = hub.get().todos?.[m.path]
+  if (!list) return refuse('that project has no to-do list here')
+  try {
+    if (m.type === 'hub-todo-add') await changeTodo(m.path, d => addTodo(d, m.text))
+    else if (m.type === 'hub-todo-edit') await changeTodo(m.path, d => editTodo(d, m.id, m.text))
+    else if (m.type === 'hub-todo-remove') await changeTodo(m.path, d => removeItem(d, m.id))
+    else if (m.type === 'hub-todo-restore') await changeTodo(m.path, d => restoreTicked(d, m.id))
+    else if (m.type === 'hub-todo-sync') await setTodoSync(m.path, m.on)
+    else if (m.type === 'hub-todo-replace') {
+      const why = await replaceRemoteTodo(m.path, m.remote)
+      if (why) return refuse(`could not replace the remote list (${why})`)
+    }
+    else {
+      const items = runOrder(list.todo, m.ids)
+      if (!items.length) return refuse('those to-do items are gone')
+      const text = runMessage(items)
+      const mark = (chat: string | undefined) => changeTodo(m.path, d => items.reduce((out, t) => startTodo(out, t.id, chat), d))
+      if (m.to) {
+        if (text.length > 4000) return refuse('too many items for one message; run them in a new chat')
+        const sent = await sendToChat(m.to, text)
+        if (sent !== true) return sent
+        await mark(m.to)
+        return true
+      }
+      const sessionId = randomUUID()
+      await mark(sessionId)
+      void newChat(m.path, text, false, undefined, 'claude', undefined, sessionId, true).then(problem => {
+        if (!problem) return
+        refuse(problem)
+        void mark(undefined).catch(() => {})
+      })
+    }
+    return true
+  } catch (err) {
+    return refuse(`could not change the to-do list (${(err as Error).message})`)
+  }
+}
+
 /** Everything the Hub shows from Claude Code's settings; also run on refresh, so edits made elsewhere show up. */
 function readSettings(): void {
   const read = readSettingsFile(SETTINGS_PATH)
@@ -535,7 +602,8 @@ async function setSwitchboard(key: SwitchboardKey, value: boolean | number | str
     readSettings()
     return
   }
-  const valid = key === 'idleMinutes' ? value === null || [5, 15, 30, 60].includes(value as number) : typeof value === 'boolean'
+  if (key === 'name') value = cleanName(value)
+  const valid = key === 'idleMinutes' ? value === null || [5, 15, 30, 60].includes(value as number) : key === 'name' || typeof value === 'boolean'
   if (!valid) return
   const controls = hub.get().controls
   const switchboard = { ...controls.switchboard, [key]: value }
@@ -544,6 +612,8 @@ async function setSwitchboard(key: SwitchboardKey, value: boolean | number | str
   hub.set({ controls: { ...controls, switchboard } })
   if (key === 'statusBar') applyStatusBar()
   if (key === 'syncRules') syncKit()
+  // Turning it back on rewrites the note, so one deleted by hand comes back.
+  if (key === 'accessNote' && value) { forgetAccessNote(); keepAccessNote() }
 }
 
 /** Writes remoteControlAtStartup; on, connects every live chat that is not connected yet. Off leaves connected chats alone. */
@@ -564,6 +634,18 @@ function refuse(problem: string): string {
   return problem
 }
 
+/** A prompt for a running chat: queued for its usage mod, or typed into Codex. */
+function sendToChat(sessionId: string, message: string): true | string | Promise<true | string> {
+  const text = message.trim().slice(0, 4000)
+  const chat = hub.get().chats.find(c => c.sessionId === sessionId)
+  if (!text || !chat) return refuse(text ? 'that chat is not running' : 'the message is empty')
+  if (!chat.live) return refuse('that chat is not running')
+  if (chat.ai === 'codex') return sendToCodex(chat, text).then(problem => (problem ? refuse(problem) : true))
+  if (!hub.takes(chat, false)) return refuse('that chat is not collecting messages (it is not running, or has no usage-meter mod); type in its terminal')
+  hub.queue(chat.sessionId, { kind: 'prompt', text })
+  return true
+}
+
 /** Handles the panel's hub messages; false for anything else, a string for why it was refused. */
 export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string | Promise<boolean | string> {
   switch (m.type) {
@@ -571,20 +653,21 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       // A manual refresh probes for the standalone app's page too.
       webAt = -Infinity
       refreshHub()
+      void loadTodos(todoFolders(workspace()), true).catch(err => log.warn('To-do lists failed:', err))
       return true
-    case 'hub-send': {
-      const text = m.text.trim().slice(0, 4000)
-      const chat = hub.get().chats.find(c => c.sessionId === m.sessionId)
-      if (!text || !chat) return refuse(text ? 'that chat is not running' : 'the message is empty')
-      if (!chat.live) return refuse('that chat is not running')
-      if (chat.ai === 'codex') return sendToCodex(chat, text).then(problem => (problem ? refuse(problem) : true))
-      if (!hub.takes(chat, false)) return refuse('that chat is not collecting messages (it is not running, or has no usage-meter mod); type in its terminal')
-      hub.queue(chat.sessionId, { kind: 'prompt', text })
-      return true
-    }
+    case 'hub-send':
+      return sendToChat(m.sessionId, m.text)
     case 'hub-answer': {
       const chat = hub.get().chats.find(c => c.sessionId === m.sessionId)
       const ask = hub.get().progress.find(p => p.sessionId === m.sessionId)?.ask
+      // The ask tool's question takes its answer over the hub, wherever the chat runs.
+      if (ask?.via === 'hub' && ask.id === m.askId) {
+        const problem = choiceProblem(ask, m.choice)
+        if (problem) return refuse(problem)
+        if (!answerQuestion(ask.id, m.choice)) return refuse('that prompt is already answered or gone')
+        hub.answered(m.sessionId, ask.id)
+        return true
+      }
       if (!chat?.live || chat.ai === 'codex') return refuse('answer that chat in its terminal')
       if (!ask || ask.id !== m.askId) return refuse('that prompt is already answered or gone')
       const keys = askKeys(ask, m.choice)
@@ -607,9 +690,10 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       return problem ? refuse(`Remote Control ${problem}`) : true
     }
     case 'hub-rc-server': {
-      const problem = rcServer(m.folder, m.on)
-      setTimeout(refreshHub, 800)
-      return problem ? refuse(problem) : true
+      return rcServer(m.folder, m.on).then(problem => {
+        setTimeout(refreshHub, 800)
+        return problem ? refuse(problem) : true
+      })
     }
     case 'hub-open-url':
       if (/^https?:\/\//.test(m.url)) void vscode.env.openExternal(vscode.Uri.parse(m.url))
@@ -619,6 +703,7 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       void ensureWeb(path.join(REPO_ROOTS[0], 'agent-flow'), m.phone === true, { bundle: path.join(extensionPath, 'dist', 'app', 'app.js'), version: extensionVersion }).then(async r => {
         if ('problem' in r) return void refuse(r.problem)
         hub.set({ webUrl: r.url, phoneUrls: await phoneUrls(r.url) })
+        keepAccessNote()
         if (!m.phone) void vscode.env.openExternal(vscode.Uri.parse(r.url))
       })
       return true
@@ -661,7 +746,8 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       return true
     case 'hub-pick-tools': {
       const goal = m.text.trim().slice(0, 2000)
-      if (goal) void pickTools(goal).catch(err => log.warn('Tool pick failed:', err))
+      if (m.path && !hub.get().projects.some(p => p.path === m.path)) return refuse(`${m.path} is not in the project list`)
+      if (goal) void pickTools(goal, m.path).catch(err => log.warn('Tool pick failed:', err))
       return true
     }
     case 'hub-chat-tools':
@@ -735,6 +821,10 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       const problem = exportKit(REPO_ROOTS[0])
       return problem ? refuse(problem) : true
     }
+    case 'hub-setup':
+      syncKit(true)
+      void runSetup(extensionPath).catch(err => refuse(`Set up failed (${(err as Error).message})`))
+      return true
     case 'hub-rules-sync':
       syncKit(true)
       return true
@@ -778,6 +868,14 @@ export function handleHubMessage(m: WebviewToExtensionMessage): boolean | string
       })
     case 'hub-device':
       return answerDevice(m.id, m.allow)
+    case 'hub-todo-add':
+    case 'hub-todo-edit':
+    case 'hub-todo-remove':
+    case 'hub-todo-restore':
+    case 'hub-todo-run':
+    case 'hub-todo-sync':
+    case 'hub-todo-replace':
+      return todoCommand(m)
     default:
       return false
   }

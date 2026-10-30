@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { BLOCK_END, BLOCK_START, HEADER, decideAgent, decideRules, rulesFile, rulesSha, syncRules, upsertBlock, withPointer } from '../src/hub/rules'
+import { BLOCK_END, BLOCK_START, GENERIC, HEADER, decideAgent, decideRules, rulesFile, rulesSha, shippedSha, syncRules, upsertBlock, withPointer } from '../src/hub/rules'
 
 const RULES = '# Working style\n\nBe brief.\n'
 const V = '2026-10-28T10:00:00Z'
@@ -53,6 +53,61 @@ describe('rules file', () => {
     assert.ok(!next.includes('# Old'))
     assert.ok(next.includes('# After'))
     assert.equal(next.split(BLOCK_START).length, 2)
+  })
+})
+
+describe('generic bundle', () => {
+  const G = `${RULES}\n${GENERIC}\n`
+  it('never replaces a personal kit copy, even an older one', () => {
+    const d = decideRules(rulesFile(RULES, '2026-01-01T00:00:00Z'), G, V, true)
+    assert.equal(d.action, 'skip')
+    assert.equal(d.why, 'personal copy')
+  })
+  it('updates an older generic copy and writes a missing file', () => {
+    assert.equal(decideRules(rulesFile(`old\n${GENERIC}\n`, '2026-01-01T00:00:00Z'), G, V, true).action, 'write')
+    assert.equal(decideRules(undefined, G, V, true).action, 'write')
+  })
+  it('a personal bundle still replaces older rules', () => {
+    assert.equal(decideRules(rulesFile('old', '2026-01-01T00:00:00Z'), RULES, V, false).action, 'write')
+  })
+  it('keeps a personal role, updates an old generic one', () => {
+    const old = `old\n${GENERIC}\n`, next = `new\n${GENERIC}\n`
+    assert.equal(decideAgent('mine', next, [rulesSha('mine')], true), 'personal')
+    assert.equal(decideAgent(old, next, [rulesSha(old)], true), 'update')
+    assert.equal(decideAgent(undefined, next, [], true), 'install')
+    assert.equal(decideAgent('old', 'new', [rulesSha('old')], false), 'update')
+  })
+  it('updates a copy an older Switchboard shipped without the marker, and nothing else', () => {
+    const shipped = [shippedSha('Kenneth rules\n'), shippedSha('---\nname: qa\nmodel: opus\n---\nqa v1\n')]
+    const old = rulesFile('Kenneth rules\n', '2026-01-01T00:00:00Z')
+    assert.equal(decideRules(old, G, V, true, shipped).action, 'write')
+    assert.equal(decideRules(old.replace(/\n/g, '\r\n'), G, V, true, shipped).action, 'write')
+    assert.equal(decideRules(rulesFile('Kenneth rules, edited\n', '2026-01-01T00:00:00Z'), G, V, true, shipped).why, 'personal copy')
+    const next = `---\nname: qa\nmodel: opus\n---\nqa v2\n${GENERIC}\n`
+    assert.equal(decideAgent('---\nname: qa\nmodel: opus\n---\nqa v1\n\n', next, [], true, shipped), 'update')
+    assert.equal(decideAgent('---\nname: qa\nmodel: haiku\n---\nqa v1\n', next, [], true, shipped), 'retune')
+    assert.equal(decideAgent('---\nname: qa\nmodel: opus\n---\nqa v1 mine\n', next, [], true, shipped), 'personal')
+  })
+  it('lists the 0.17 copies in kit/shipped.json', () => {
+    const list = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'kit', 'shipped.json'), 'utf8')) as string[]
+    assert.ok(list.length >= 8 && list.every(h => /^[0-9a-f]{64}$/.test(h)))
+  })
+  it('syncRules keeps a personal setup whole and says so', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-rules-')), k = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-rules-'))
+    fs.mkdirSync(path.join(k, 'agents'), { recursive: true })
+    fs.writeFileSync(path.join(k, 'rules.md'), G)
+    fs.writeFileSync(path.join(k, 'agents', 'qa.md'), `qa v2\n${GENERIC}\n`)
+    fs.writeFileSync(path.join(k, 'bundle.json'), JSON.stringify({ rulesVersion: V, generic: true, history: { 'qa.md': [rulesSha('qa v1')] } }))
+    fs.mkdirSync(path.join(home, '.claude', 'agents'), { recursive: true })
+    const mine = rulesFile('Kenneth rules', '2026-01-01T00:00:00Z')
+    fs.writeFileSync(path.join(home, '.claude', 'CLAUDE.md'), mine)
+    fs.writeFileSync(path.join(home, '.claude', 'agents', 'qa.md'), 'qa v1')
+    const r = syncRules({ home, kit: k, write: true })
+    assert.equal(fs.readFileSync(path.join(home, '.claude', 'CLAUDE.md'), 'utf8'), mine)
+    assert.equal(fs.readFileSync(path.join(home, '.claude', 'agents', 'qa.md'), 'utf8'), 'qa v1')
+    assert.ok(!fs.existsSync(path.join(home, '.claude', 'agents', 'qa.md.switchboard-new')))
+    assert.deepEqual(r.ready, { claude: true, codex: false })
+    assert.match(r.note, /kept your own kit copy of CLAUDE\.md, qa\.md/)
   })
 })
 
