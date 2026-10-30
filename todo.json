@@ -1,6 +1,12 @@
 {
  "version": 1,
- "todo": [],
+ "todo": [
+  {
+   "id": "7ffd4fde",
+   "text": "Create instructions on creating mod instructions taylored for your own use.",
+   "at": 1793353577294
+  }
+ ],
  "removed": {
   "4323189c": 1793339057827,
   "2af925c8": 1793349145205,
