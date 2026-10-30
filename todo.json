@@ -5,12 +5,6 @@
    "id": "7ffd4fde",
    "text": "Create instructions on creating mod instructions taylored for your own use.",
    "at": 1793353577294
-  },
-  {
-   "id": "8e818c83",
-   "text": "hub-new-chat sometimes cuts off the typed claude command (seen ending at \"...T/switch\"), leaving the shell waiting on a quote and no chat started; likely typed before the login shell is ready. Wait for shell readiness before sending text (extension/src/hub/actions.ts new chat path)",
-   "at": 1793356591512,
-   "from": "b718000f-33f6-4cca-9248-d63589fd2902"
   }
  ],
  "removed": {
@@ -21,9 +15,17 @@
   "0ab0326a": 1793354522296,
   "eb57bac5": 1793354530652,
   "32eb2355": 1793354970213,
-  "3bebe8f9": 1793356607109
+  "3bebe8f9": 1793356607109,
+  "8e818c83": 1793365651621
  },
  "ticked": [
+  {
+   "id": "8e818c83",
+   "text": "hub-new-chat sometimes cuts off the typed claude command (seen ending at \"...T/switch\"), leaving the shell waiting on a quote and no chat started; likely typed before the login shell is ready. Wait for shell readiness before sending text (extension/src/hub/actions.ts new chat path)",
+   "at": 1793365651621,
+   "by": "b718000f-33f6-4cca-9248-d63589fd2902",
+   "from": "b718000f-33f6-4cca-9248-d63589fd2902"
+  },
   {
    "id": "32eb2355",
    "text": "temp check, ignore",
