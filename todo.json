@@ -5,12 +5,6 @@
    "id": "7ffd4fde",
    "text": "Create instructions on creating mod instructions taylored for your own use.",
    "at": 1793353577294
-  },
-  {
-   "id": "bda22b4a",
-   "text": "nothing open. Request your agent-flow chat again, since the earlier attempt never started.",
-   "at": 1793365818947,
-   "from": "b718000f-33f6-4cca-9248-d63589fd2902"
   }
  ],
  "removed": {
@@ -26,9 +20,17 @@
   "69fe2b40": 1793389003722,
   "98f9fc01": 1793389003722,
   "766528dd": 1793389003722,
-  "95dec3fa": 1793389003722
+  "95dec3fa": 1793389003722,
+  "bda22b4a": 1793390332383
  },
  "ticked": [
+  {
+   "id": "bda22b4a",
+   "text": "nothing open. Request your agent-flow chat again, since the earlier attempt never started.",
+   "at": 1793390332383,
+   "by": "a0ed070c-6c61-4f3f-a746-58fade7f0cea",
+   "from": "b718000f-33f6-4cca-9248-d63589fd2902"
+  },
   {
    "id": "8e818c83",
    "text": "hub-new-chat sometimes cuts off the typed claude command (seen ending at \"...T/switch\"), leaving the shell waiting on a quote and no chat started; likely typed before the login shell is ready. Wait for shell readiness before sending text (extension/src/hub/actions.ts new chat path)",
