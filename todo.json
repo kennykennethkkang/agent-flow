@@ -5,6 +5,12 @@
    "id": "7ffd4fde",
    "text": "Create instructions on creating mod instructions taylored for your own use.",
    "at": 1793353577294
+  },
+  {
+   "id": "6038dc87",
+   "text": "Restart the phone app on any changed bundle, not only a newer version: ensureWeb in extension/src/hub/local.ts gates the stale check on newerVersion, so reinstalling the same 0.18.0 leaves 3131 on the old build until restarted by hand",
+   "at": 1793354416904,
+   "from": "b718000f-33f6-4cca-9248-d63589fd2902"
   }
  ],
  "removed": {
