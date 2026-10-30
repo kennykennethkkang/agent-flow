@@ -5,12 +5,6 @@
    "id": "7ffd4fde",
    "text": "Create instructions on creating mod instructions taylored for your own use.",
    "at": 1793353577294
-  },
-  {
-   "id": "eb57bac5",
-   "text": "Reinstalling the same version doesn't restart the phone app by itself; this time I restarted it by hand. That's in the to-do as 6038dc87.",
-   "at": 1793354441985,
-   "from": "b718000f-33f6-4cca-9248-d63589fd2902"
   }
  ],
  "removed": {
@@ -18,9 +12,16 @@
   "2af925c8": 1793349145205,
   "1690da63": 1793349332652,
   "6038dc87": 1793354505734,
-  "0ab0326a": 1793354522296
+  "0ab0326a": 1793354522296,
+  "eb57bac5": 1793354530652
  },
  "ticked": [
+  {
+   "id": "eb57bac5",
+   "text": "Reinstalling the same version doesn't restart the phone app by itself; this time I restarted it by hand. That's in the to-do as 6038dc87.",
+   "at": 1793354530652,
+   "from": "b718000f-33f6-4cca-9248-d63589fd2902"
+  },
   {
    "id": "0ab0326a",
    "text": "If a send fails again, tell me which chat it was. Its session file will pin down the cause.",
