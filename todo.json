@@ -5,6 +5,24 @@
    "id": "7ffd4fde",
    "text": "Create instructions on creating mod instructions taylored for your own use.",
    "at": 1793353577294
+  },
+  {
+   "id": "4ab33924",
+   "text": "File upload hasn't been tried in a real VS Code panel or on your actual phone yet. It worked in demo mode and through the real upload route on the Mac.",
+   "at": 1793405120838,
+   "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad"
+  },
+  {
+   "id": "3bc13812",
+   "text": "`../claude-mods` needs its own commit. The build copies the kit from there, so the rules section and the AWS guard fix had to go there too; an earlier copy of t",
+   "at": 1793405120838,
+   "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad"
+  },
+  {
+   "id": "182aa262",
+   "text": "Your old telemetry files in `~/.agent-flow/` are still on disk if you want to delete them.",
+   "at": 1793405120838,
+   "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad"
   }
  ],
  "removed": {
