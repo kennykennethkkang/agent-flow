@@ -7,19 +7,21 @@
    "at": 1793353577294
   },
   {
-   "id": "4ab33924",
-   "text": "File upload hasn't been tried in a real VS Code panel or on your actual phone yet. It worked in demo mode and through the real upload route on the Mac.",
-   "at": 1793405239537,
-   "chat": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad",
-   "host": "62903adf5e340f87",
+   "id": "e462a05d",
+   "text": "The agent-flow window hasn't been reloaded, since this chat runs in it, so it's still on 0.18.0. Reload it after this chat; until then, chats in it won't take m",
+   "at": 1793413128748,
    "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad"
   },
   {
-   "id": "3bc13812",
-   "text": "`../claude-mods` needs its own commit. The build copies the kit from there, so the rules section and the AWS guard fix had to go there too; an earlier copy of t",
-   "at": 1793405239537,
-   "chat": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad",
-   "host": "62903adf5e340f87",
+   "id": "921edabf",
+   "text": "Upload inside the VS Code panel itself (as opposed to the browser app) still needs one click-through from you. That to-do item stays open.",
+   "at": 1793413128748,
+   "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad"
+  },
+  {
+   "id": "7bed044f",
+   "text": "`../claude-mods` needs its own commit: the rules, AWS guard and usage-meter changes live there. It also has an untracked `kit/switchboard-0.18.0.vsix`; decide w",
+   "at": 1793413128748,
    "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad"
   }
  ],
@@ -41,7 +43,9 @@
   "10828c87": 1793393191340,
   "e8d631aa": 1793393191340,
   "341c15d2": 1793393191340,
-  "182aa262": 1793413089345
+  "182aa262": 1793413089345,
+  "4ab33924": 1793413128748,
+  "3bc13812": 1793413128748
  },
  "ticked": [
   {
