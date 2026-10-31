@@ -10,25 +10,17 @@
    "id": "4ab33924",
    "text": "File upload hasn't been tried in a real VS Code panel or on your actual phone yet. It worked in demo mode and through the real upload route on the Mac.",
    "at": 1793405239537,
-   "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad",
    "chat": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad",
-   "host": "62903adf5e340f87"
+   "host": "62903adf5e340f87",
+   "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad"
   },
   {
    "id": "3bc13812",
    "text": "`../claude-mods` needs its own commit. The build copies the kit from there, so the rules section and the AWS guard fix had to go there too; an earlier copy of t",
    "at": 1793405239537,
-   "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad",
    "chat": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad",
-   "host": "62903adf5e340f87"
-  },
-  {
-   "id": "182aa262",
-   "text": "Your old telemetry files in `~/.agent-flow/` are still on disk if you want to delete them.",
-   "at": 1793405239537,
-   "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad",
-   "chat": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad",
-   "host": "62903adf5e340f87"
+   "host": "62903adf5e340f87",
+   "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad"
   }
  ],
  "removed": {
@@ -48,9 +40,17 @@
   "bda22b4a": 1793390332383,
   "10828c87": 1793393191340,
   "e8d631aa": 1793393191340,
-  "341c15d2": 1793393191340
+  "341c15d2": 1793393191340,
+  "182aa262": 1793413089345
  },
  "ticked": [
+  {
+   "id": "182aa262",
+   "text": "Your old telemetry files in `~/.agent-flow/` are still on disk if you want to delete them.",
+   "at": 1793413089345,
+   "by": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad",
+   "from": "cf0a51b2-4733-4c72-9a88-e9386f2b15ad"
+  },
   {
    "id": "bda22b4a",
    "text": "nothing open. Request your agent-flow chat again, since the earlier attempt never started.",
